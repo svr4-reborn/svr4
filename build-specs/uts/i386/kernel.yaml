@@ -1,0 +1,874 @@
+toolchain:
+  cc: gcc
+  cpp: cpp
+  ld: ld
+  cflags:
+    - -std=gnu89
+    - -fcommon
+    - -fno-builtin
+    - -O2
+  cppflags:
+    - -P
+  ldflags: []
+
+variables:
+  system_root: "{builddir}/uts/i386/system-root"
+  conf_root: "{builddir}/uts/i386/conf"
+  cf_dir: "{conf_root}/cf.d"
+  pack_root: "{conf_root}/pack.d"
+  obj_root: "{builddir}/uts/i386/obj"
+  legacy_stage_root: "{builddir}/legacy-src"
+  boot_stage_root: "{legacy_stage_root}/uts/i386/boot"
+  boot_stage_at386_root: "{boot_stage_root}/at386"
+  fp_stage_root: "{legacy_stage_root}/uts/i386/fp"
+  idcmd_tool_root: "{builddir}/uts/i386/tools/idcmd"
+  conf_bin: "{system_root}/etc/conf/bin"
+  simple_idconfig_manifest: "{cf_dir}/simple-idconfig.json"
+  driver_compose_report: "{cf_dir}/driver-compose-report.json"
+  init_root: "{conf_root}/init.d"
+  mfsys_root: "{conf_root}/mfsys.d"
+  node_root: "{conf_root}/node.d"
+  rc_root: "{conf_root}/rc.d"
+  sd_root: "{conf_root}/sd.d"
+  mdevice_root: "{conf_root}/mdevice.d"
+  sdevice_root: "{conf_root}/sdevice.d"
+  sfsys_root: "{conf_root}/sfsys.d"
+
+source_views:
+  uts-at386:
+    roots:
+      - arch/at/uts/i386
+      - uts/i386
+
+profiles:
+  kernmap-at386:
+    flags:
+      - -I.
+      - -D_KERNEL
+      - -DAT386
+      - -DWEITEK
+      - -DWEITEK_EMULATOR
+
+  os-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -DAT386
+      - -DWEITEK
+
+  vm-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -Dnotnow
+      - -DAT386
+
+  exec-at386:
+    flags:
+      - -I../..
+      - -D_KERNEL
+      - -DAT386
+
+  io-at386:
+    include_source_view_roots: true
+    flags:
+      - -I..
+      - -I../..
+      - -D_KERNEL
+      - -DSYSV
+      - -DSVR40
+      - -DAT386
+
+  fs-at386:
+    flags:
+      - -I..
+      - -I../..
+      - -D_KERNEL
+      - -DAT386
+
+  disp-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -DAT386
+
+  vx-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -DAT386
+
+  netmod-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -DSYSV
+      - -DAT386
+
+  netinet-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -DSYSV
+      - -Di386
+      - -DAT386
+
+  kdb-at386:
+    flags:
+      - -I../..
+      - -D_KERNEL
+      - -DAT386
+
+  ml-at386:
+    flags:
+      - -I..
+      - -D_KERNEL
+      - -DAT386
+      - -DWEITEK
+      - -DWEITEK_EMULATOR
+
+targets:
+  prepare-layout:
+    description: Create the full AT386 kernel object and conf tree roots used by the YAML-driven build graph.
+    steps:
+      - kind: mkdirs
+        paths:
+          - "{conf_root}"
+          - "{cf_dir}"
+          - "{pack_root}"
+          - "{obj_root}"
+          - "{init_root}"
+          - "{mfsys_root}"
+          - "{node_root}"
+          - "{rc_root}"
+          - "{sd_root}"
+          - "{mdevice_root}"
+          - "{sdevice_root}"
+          - "{sfsys_root}"
+
+  config-at386:
+    description: Materialize the top-level preprocessed kernel configuration inputs that feed the final system build.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: preprocess
+        source_view: uts-at386
+        use:
+          - kernmap-at386
+        cwd: .
+        source: kernmap
+        output: "{cf_dir}/kernmap"
+
+      - kind: preprocess
+        source_view: uts-at386
+        use:
+          - kernmap-at386
+        cwd: .
+        source: vuifile
+        output: "{cf_dir}/vuifile"
+
+  master-tree-at386:
+    description: Stage the historical uts/i386/master.d and arch/at/uts/i386/master.d metadata into the synthetic conf tree.
+    depends_on:
+      - config-at386
+    steps:
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_stage_master_at386.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --conf-root
+          - "{conf_root}"
+          - --cpp
+          - "{cpp}"
+          - --cpp-flag=-P
+          - --cpp-flag=-DAT386
+          - --cpp-flag=-DWEITEK
+          - --cpp-flag=-DWEITEK_EMULATOR
+
+  simple-idconfig-at386:
+    description: Generate a modern config.h and configuration manifest from the staged AT386 conf metadata without using the legacy idtools.
+    depends_on:
+      - master-tree-at386
+    steps:
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_idconfig.py
+          - --conf-root
+          - "{conf_root}"
+          - --output-dir
+          - "{cf_dir}"
+          - --manifest
+          - "{simple_idconfig_manifest}"
+          - --obj-root
+          - "{obj_root}"
+
+  driver-packages-at386:
+    description: Compose pack.d/<module>/Driver.o files from the YAML-driven object tree and the generated uts_idconfig manifest.
+    depends_on:
+      - kernel-at386
+      - simple-idconfig-at386
+    steps:
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_driver_compose.py
+          - --manifest
+          - "{simple_idconfig_manifest}"
+          - --workspace-root
+          - "{workspace_root}"
+          - --cc
+          - "{cc}"
+          - --ld
+          - "{ld}"
+          - --cflag=-std=gnu89
+          - --cflag=-fcommon
+          - --cflag=-fno-builtin
+          - --cflag=-O2
+          - --cflag=-D_KERNEL
+          - --cflag=-DAT386
+          - --cflag=-DWEITEK
+          - --cflag=-DWEITEK_EMULATOR
+          - --cflag=-DVPIX
+          - --cflag=-DSYSV
+          - --cflag=-DSVR40
+          - --include-dir={cf_dir}
+          - --include-dir={workspace_root}/arch/at/uts/i386
+          - --include-dir={workspace_root}/uts/i386
+          - --report
+          - "{driver_compose_report}"
+
+  idcmd-tools-at386:
+    description: Build host-side idconfig and idmkunix binaries for the staged historical idbuild flow.
+    steps:
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              mkdir -p "{idcmd_tool_root}"
+              "{cc}" -std=gnu89 -fcommon -fno-builtin -O2 -DHOST_IDCMD_BUILD -D_STYPES -DAT386 -DVPIX -DWEITEK -DMERGE \
+                -I"{workspace_root}/cmd/idcmd" \
+                "{workspace_root}/cmd/idcmd/idconfig.c" -o "{idcmd_tool_root}/idconfig"
+              "{cc}" -std=gnu89 -fcommon -fno-builtin -O2 -D_STYPES -DAT386 -DVPIX -DWEITEK -DMERGE \
+                -I"{workspace_root}/cmd/idcmd" \
+                "{workspace_root}/cmd/idcmd/idmkunix.c" -o "{idcmd_tool_root}/idmkunix"
+
+  stage-idbuild-root-at386:
+    description: Stage the synthetic conf tree into a ROOT-shaped directory suitable for the historical idbuild script.
+    depends_on:
+      - master-tree-at386
+      - idcmd-tools-at386
+    steps:
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              rm -rf "{system_root}/etc/conf"
+              mkdir -p "{system_root}/etc"
+              cp -a "{conf_root}" "{system_root}/etc/conf"
+              mkdir -p "{conf_bin}"
+              cp "cmd/idcmd/idbuild" "{conf_bin}/idbuild"
+              chmod 755 "{conf_bin}/idbuild"
+              for tool in idconfig idmkunix; do
+                cp "{idcmd_tool_root}/$tool" "{conf_bin}/$tool"
+                chmod 755 "{conf_bin}/$tool"
+              done
+
+  idbuild-at386:
+    description: Invoke the staged historical idbuild flow when idconfig and idmkunix are available in the staged conf/bin directory.
+    depends_on:
+      - stage-idbuild-root-at386
+    steps:
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              if [ ! -x "{conf_bin}/idconfig" ] || [ ! -x "{conf_bin}/idmkunix" ]; then
+                echo "Skipping idbuild-at386: stage executable idconfig and idmkunix into {conf_bin} first."
+                exit 0
+              fi
+              ROOT="{system_root}" sh "{conf_bin}/idbuild"
+
+  boot-at386:
+    description: Build and stage the historical AT386 bootstrap family under uts/i386/boot into the synthetic system-root.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
+              mkdir -p "$legacy_bin" "{system_root}/etc"
+              cat >"$legacy_bin/cc" <<'EOF'
+              #!/bin/sh
+              out=
+              src=
+              prev=
+              for arg in "$@"; do
+                if [ "$prev" = "-o" ]; then
+                  out="$arg"
+                fi
+                prev="$arg"
+                src="$arg"
+              done
+              if [ "${{src##*/}}" = "rmhdr.c" ] && [ -n "$out" ]; then
+                cat >"$out" <<'EOS'
+              #!/bin/sh
+              set -eu
+              objcopy -O binary "$1" "$2"
+              EOS
+                chmod 755 "$out"
+                exit 0
+              fi
+              exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin "$@"
+              EOF
+              chmod 755 "$legacy_bin/cc"
+              cp "{workspace_root}/tools/legacy_as.py" "$legacy_bin/as"
+              chmod 755 "$legacy_bin/as"
+              cp "{workspace_root}/tools/legacy_ld.py" "$legacy_bin/ld"
+              chmod 755 "$legacy_bin/ld"
+              stage_root="{legacy_stage_root}"
+              mkdir -p "$stage_root/uts/i386"
+              rm -rf "$stage_root/tools" "{boot_stage_root}"
+              cp -a "{workspace_root}/tools" "$stage_root/"
+              cp -a "{workspace_root}/uts/i386/boot" "$stage_root/uts/i386/"
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_boot_symvals.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --boot-root
+          - "{boot_stage_at386_root}"
+          - --cc
+          - "{cc}"
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
+              export PATH="$legacy_bin:$PATH"
+              mkdir -p "{system_root}/etc"
+              cd "{boot_stage_root}/bootlib"
+              make -f bootlib.mk \
+                "CC=cc" \
+                "AS=as" \
+                "LD={ld}" \
+                "CPP={cpp}" \
+                "CCSTYPE=ELF" \
+                "MORECPP=-DAT386 -DWEITEK -DWEITEK_EMULATOR -I{workspace_root}/head -I{workspace_root}/cmd/sgs/inc/common" \
+                "INCRT={workspace_root}/uts/i386" \
+                "BUS=AT386" \
+                "ARCH=AT386" \
+                install
+              cd "{boot_stage_at386_root}"
+              make \
+                "CC=cc" \
+                "AS=as" \
+                "LD={ld}" \
+                "CPP={cpp}" \
+                "CCSTYPE=ELF" \
+                "STRIP=strip" \
+                "MORECPP=-DAT386 -DWEITEK -DWEITEK_EMULATOR -I{workspace_root}/head -I{workspace_root}/cmd/sgs/inc/common" \
+                "INCRT={workspace_root}/uts/i386" \
+                "BUS=AT386" \
+                "ARCH=AT386" \
+                tools fdboot hdboot
+              install -d "{system_root}/etc/default"
+              install -m 0644 "fdboot" "{system_root}/etc/.fboot"
+              install -m 0644 "hdboot" "{system_root}/etc/.wboot"
+              install -m 0644 "default/default.at386" "{system_root}/etc/default/default.at386"
+              install -m 0644 "default/default.cpq" "{system_root}/etc/default/default.cpq"
+              install -m 0644 "default/default.att" "{system_root}/etc/default/default.att"
+              install -m 0644 "default/default.att512" "{system_root}/etc/default/default.att512"
+              cp "default/default.at386" "{system_root}/etc/default/boot"
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_boot_initprog.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --boot-root
+          - "{boot_stage_root}"
+          - --build-root
+          - "{builddir}/uts/i386/boot/at386/initprog"
+          - --system-root
+          - "{system_root}"
+          - --cc
+          - "{cc}"
+          - --cpp
+          - "{cpp}"
+          - --as
+          - as
+          - --ld
+          - "{ld}"
+
+  fp-at386:
+    description: Build and stage the historical floating-point emulator family under uts/i386/fp into the synthetic system-root.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
+              mkdir -p "$legacy_bin" "{system_root}/etc" "{system_root}/sbin"
+              cat >"$legacy_bin/cc" <<'EOF'
+              #!/bin/sh
+              out=
+              src=
+              prev=
+              for arg in "$@"; do
+                if [ "$prev" = "-o" ]; then
+                  out="$arg"
+                fi
+                prev="$arg"
+                src="$arg"
+              done
+              if [ "${{src##*/}}" = "rmhdr.c" ] && [ -n "$out" ]; then
+                cat >"$out" <<'EOS'
+              #!/bin/sh
+              set -eu
+              objcopy -O binary "$1" "$2"
+              EOS
+                chmod 755 "$out"
+                exit 0
+              fi
+              exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin "$@"
+              EOF
+              chmod 755 "$legacy_bin/cc"
+              export PATH="$legacy_bin:$PATH"
+              stage_root="{legacy_stage_root}"
+              mkdir -p "$stage_root/uts/i386"
+              rm -rf "$stage_root/tools" "{fp_stage_root}"
+              cp -a "{workspace_root}/tools" "$stage_root/"
+              cp -a "{workspace_root}/uts/i386/fp" "$stage_root/uts/i386/"
+              mkdir -p "{system_root}/etc" "{system_root}/sbin"
+              cd "{fp_stage_root}"
+              make -f fp.mk \
+                "ROOT={system_root}" \
+                "CC=cc" \
+                "AS=as" \
+                "LD={ld}" \
+                "CPP={cpp}" \
+                "CCSTYPE=ELF" \
+                "CFLAGS=-O -I{workspace_root}/uts/i386 -D_KERNEL -DAT386 -DWEITEK -DWEITEK_EMULATOR" \
+                "MORECPP=-DAT386 -DWEITEK -DWEITEK_EMULATOR" \
+                "INCRT={workspace_root}/uts/i386" \
+                "BUS=AT386" \
+                "ARCH=AT386" \
+                install
+
+  historical-platform-at386:
+    description: Aggregate the historically separate bootstrap and floating-point emulator build families.
+    depends_on:
+      - boot-at386
+      - fp-at386
+
+  os-at386:
+    description: Compile the core operating-system sources under uts/i386/os.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - os-at386
+        cwd: os
+        output_dir: "{obj_root}/os"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  vm-at386:
+    description: Compile the virtual-memory subsystem sources under uts/i386/vm.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - vm-at386
+        cwd: vm
+        output_dir: "{obj_root}/vm"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  disp-at386:
+    description: Compile the scheduling and dispatcher classes under uts/i386/disp.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - disp-at386
+        cwd: disp
+        output_dir: "{obj_root}/disp"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  vx-at386:
+    description: Compile the VP/ix support driver sources under uts/i386/vx.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - vx-at386
+        cwd: vx
+        output_dir: "{obj_root}/vx"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  exec-at386:
+    description: Compile all executable-loader families under uts/i386/exec.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - exec-at386
+        cwd: exec
+        output_dir: "{obj_root}/exec"
+        continue_on_error: true
+        discover:
+          recursive: true
+          extensions:
+            - .c
+
+  io-core-at386:
+    description: Compile the generic and flat AT386 overlay driver sources under uts/i386/io, excluding ws, kd, and kdvm subtrees.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - io-at386
+        cwd: io
+        output_dir: "{obj_root}/io/core"
+        continue_on_error: true
+        discover:
+          recursive: true
+          extensions:
+            - .c
+            - .s
+          exclude_dirs:
+            - ws
+            - kd
+            - kdvm
+
+  io-ws-at386:
+    description: Compile the workstation stream driver subtree under uts/i386/io/ws.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - io-at386
+        cwd: io/ws
+        output_dir: "{obj_root}/io/ws"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  io-kd-at386:
+    description: Compile the AT386 keyboard and display driver subtree under arch/at/uts/i386/io/kd.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - io-at386
+        cwd: io/kd
+        output_dir: "{obj_root}/io/kd"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  io-kdvm-at386:
+    description: Compile the AT386 KD virtual-memory companion driver under arch/at/uts/i386/io/kdvm.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - io-at386
+        cwd: io/kdvm
+        output_dir: "{obj_root}/io/kdvm"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  io-at386:
+    description: Aggregate the generic, workstation, and AT386-specific driver subtrees.
+    depends_on:
+      - io-core-at386
+      - io-ws-at386
+      - io-kd-at386
+      - io-kdvm-at386
+
+  ml-at386:
+    description: Build the low-level machine-layer objects, including the generated locore/start/syms kernel inputs.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_ml_build.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --obj-root
+          - "{obj_root}/ml"
+          - --pack-root
+          - "{pack_root}/kernel"
+          - --cc
+          - "{cc}"
+          - --cpp
+          - "{cpp}"
+          - --ld
+          - "{ld}"
+          - --cflag=-std=gnu89
+          - --cflag=-fcommon
+          - --cflag=-fno-builtin
+          - --cflag=-O2
+          - --cflag=-I..
+          - --cflag=-D_KERNEL
+          - --cflag=-DAT386
+          - --cflag=-DWEITEK
+          - --cflag=-DWEITEK_EMULATOR
+          - --cpp-flag=-P
+          - --cpp-flag=-I..
+          - --cpp-flag=-D_KERNEL
+          - --cpp-flag=-DLOCORE
+          - --cpp-flag=-DAT386
+          - --cpp-flag=-DWEITEK
+          - --cpp-flag=-DWEITEK_EMULATOR
+
+  fs-at386:
+    description: Compile the full filesystem stack, including nested filesystem types, under uts/i386/fs.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - fs-at386
+        cwd: fs
+        output_dir: "{obj_root}/fs"
+        continue_on_error: true
+        discover:
+          recursive: true
+          extensions:
+            - .c
+
+  des-at386:
+    description: Compile the kernel DES sources under uts/i386/des.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - netmod-at386
+        cwd: des
+        output_dir: "{obj_root}/des"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  rpc-at386:
+    description: Compile the kernel RPC sources under uts/i386/rpc.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - netmod-at386
+        cwd: rpc
+        output_dir: "{obj_root}/rpc"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  ktli-at386:
+    description: Compile the kernel TLI sources under uts/i386/ktli.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - netmod-at386
+        cwd: ktli
+        output_dir: "{obj_root}/ktli"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  klm-at386:
+    description: Compile the kernel lock-manager sources under uts/i386/klm.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - netmod-at386
+        cwd: klm
+        output_dir: "{obj_root}/klm"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  netinet-at386:
+    description: Compile the TCP/IP stack sources under uts/i386/netinet.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - netinet-at386
+        cwd: netinet
+        output_dir: "{obj_root}/netinet"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  network-at386:
+    description: Aggregate the network-facing kernel modules that historical nonet builds excluded.
+    depends_on:
+      - des-at386
+      - rpc-at386
+      - ktli-at386
+      - klm-at386
+      - netinet-at386
+
+  kdb-core-at386:
+    description: Compile the in-kernel debugger core under uts/i386/kdb/kdb.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - kdb-at386
+        cwd: kdb/kdb
+        output_dir: "{obj_root}/kdb/core"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  kdb-gdebugger-at386:
+    description: Compile the graphical debugger companion sources under uts/i386/kdb/gdebugger.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - kdb-at386
+        cwd: kdb/gdebugger
+        output_dir: "{obj_root}/kdb/gdebugger"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  kdb-util-at386:
+    description: Compile the in-kernel debugger support sources under uts/i386/kdb/kdb-util.
+    depends_on:
+      - prepare-layout
+    steps:
+      - kind: compile
+        source_view: uts-at386
+        use:
+          - kdb-at386
+        cwd: kdb/kdb-util
+        output_dir: "{obj_root}/kdb/kdb-util"
+        continue_on_error: true
+        discover:
+          extensions:
+            - .c
+
+  kdb-at386:
+    description: Aggregate the kernel debugger families that participate in the AT386 kernel build tree.
+    depends_on:
+      - kdb-core-at386
+      - kdb-gdebugger-at386
+      - kdb-util-at386
+
+  kernel-core-at386:
+    description: Aggregate the non-network kernel subsystems that form the AT386 kernel proper.
+    depends_on:
+      - config-at386
+      - os-at386
+      - vm-at386
+      - disp-at386
+      - vx-at386
+      - exec-at386
+      - io-at386
+      - ml-at386
+      - fs-at386
+
+  kernel-at386-nonet:
+    description: Full AT386 kernel build graph without the network-facing subsystems.
+    depends_on:
+      - kernel-core-at386
+      - kdb-at386
+
+  kernel-at386:
+    description: Full AT386 kernel build graph across the complete uts/i386 tree, including network and debugger subsystems.
+    depends_on:
+      - kernel-core-at386
+      - network-at386
+      - kdb-at386
+
+  kernel-system-at386:
+    description: Full AT386 kernel graph plus the historical platform families and staged system-build phases.
+    depends_on:
+      - kernel-at386
+      - historical-platform-at386
+      - master-tree-at386
+      - idbuild-at386
