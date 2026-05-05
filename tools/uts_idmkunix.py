@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -114,122 +113,6 @@ def _read_core_link_objects(manifest: dict[str, object]) -> list[Path]:
     return [Path(str(object_path)).resolve() for object_path in manifest.get("core_link_objects", [])]
 
 
-def _prepare_gnu_vuifile(vuifile: Path) -> Path:
-    text = vuifile.read_text()
-    text = re.sub(r"\borigin\b", "ORIGIN", text)
-    text = re.sub(r"\blength\b", "LENGTH", text)
-
-    regions: dict[str, str] = {}
-    normalized_lines: list[str] = []
-    for line in text.splitlines():
-        match = re.match(r"(\s*)([A-Z][A-Za-z0-9_]*)(\s*:\s*ORIGIN\s*=.*)", line)
-        if match is not None:
-            region_name = match.group(2)
-            lowered_region = region_name.lower()
-            regions[region_name] = lowered_region
-            declaration = match.group(3).lstrip()
-            line = f"{match.group(1)}{lowered_region} {declaration}"
-        elif "ORIGIN" not in line:
-            section_match = re.match(r"(\s*[./A-Za-z0-9_][^=]*?)\s*:\s*(\{.*)?$", line)
-            if section_match is not None:
-                line = f"{section_match.group(1)} :"
-                if section_match.group(2):
-                    line += f" {section_match.group(2)}"
-        normalized_lines.append(line)
-
-    normalized_text = "\n".join(normalized_lines) + "\n"
-    for region_name, lowered_region in regions.items():
-        normalized_text = re.sub(rf">\s*{region_name}\b", f"> {lowered_region}", normalized_text)
-
-    if "PHDRS" not in normalized_text:
-        normalized_text = normalized_text.replace(
-            "SECTIONS {",
-            "PHDRS {\n text PT_LOAD FLAGS(5);\n data PT_LOAD FLAGS(7);\n bki PT_NOTE FLAGS(0);\n}\nSECTIONS {",
-            1,
-        )
-
-    normalized_text = re.sub(
-        r"^\s*BKI\s*\(COPY\)\s*:\s*\{\s*\.\s*\+=\s*2;\s*\}\s*=\s*2\s*$",
-        " BKI 0 : { *(BKI) } :bki",
-        normalized_text,
-        count=1,
-        flags=re.M,
-    )
-    normalized_text = normalized_text.replace(
-        " .text : {\n  stext = .;\n  ../pack.d/kernel/start.o(.text)\n",
-        " .text : {\n  stext = .;\n  ../pack.d/kernel/start.o(.text)\n  *(.text .text.*)\n  *(.rodata .rodata.*)\n",
-        1,
-    )
-    normalized_text = normalized_text.replace(
-        " .data ALIGN(0x1000) : {\n  sdata = .;\n  ../pack.d/kernel/locore.o(.data)\n",
-        " .data ALIGN(0x1000) : {\n  sdata = .;\n  ../pack.d/kernel/locore.o(.data)\n  *(.data .data.*)\n",
-        1,
-    )
-    normalized_text = normalized_text.replace(
-        " .bss ALIGN(0x1000) : {\n  sbss = .;\n  ../pack.d/kernel/locore.o(.bss)\n",
-        " .bss ALIGN(0x1000) : {\n  sbss = .;\n  ../pack.d/kernel/locore.o(.bss)\n  *(COMMON)\n  *(.bss .bss.*)\n",
-        1,
-    )
-    normalized_text = re.sub(
-        r"(\n\s*\.text\s*:\s*\{.*?\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)\s*$",
-        r"\1 :text",
-        normalized_text,
-        count=1,
-        flags=re.S | re.M,
-    )
-    normalized_text = re.sub(
-        r"(\n\s*\.data[^\{]*\{.*?\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)\s*$",
-        r"\1 :data",
-        normalized_text,
-        count=1,
-        flags=re.S | re.M,
-    )
-    normalized_text = re.sub(
-        r"(\n\s*\.bss[^\{]*\{.*?\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)\s*$",
-        r"\1 :data",
-        normalized_text,
-        count=1,
-        flags=re.S | re.M,
-    )
-
-    if not re.search(r"\betext\s*=", normalized_text):
-        normalized_text = re.sub(
-            r"(\.text\s*:\s*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
-            r"\1\n  etext = .;\2",
-            normalized_text,
-            count=1,
-            flags=re.S,
-        )
-    if not re.search(r"\bedata\s*=", normalized_text):
-        normalized_text = re.sub(
-            r"(\.data[^\{]*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
-            r"\1\n  edata = .;\2",
-            normalized_text,
-            count=1,
-            flags=re.S,
-        )
-    if not re.search(r"\bend\s*=", normalized_text):
-        normalized_text = re.sub(
-            r"(\.bss[^\{]*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
-            r"\1\n  end = .;\n  _end = .;\2",
-            normalized_text,
-            count=1,
-            flags=re.S,
-        )
-
-    if "/DISCARD/" not in normalized_text:
-        normalized_text = re.sub(
-            r"\n\s*}\s*$",
-            "\n /DISCARD/ : { *(.eh_frame) *(.rel.eh_frame) *(.note.gnu.property) *(.comment) }\n }\n",
-            normalized_text,
-            count=1,
-        )
-
-    gnu_vuifile = vuifile.with_name("vuifile.gnu")
-    gnu_vuifile.write_text(normalized_text)
-    return gnu_vuifile
-
-
 def _link_unix(
     cf_dir: Path,
     output_path: Path,
@@ -239,7 +122,6 @@ def _link_unix(
     fsconf_o: Path,
     vector_o: Path,
 ) -> None:
-    vuifile = _prepare_gnu_vuifile(cf_dir / "vuifile")
     filtered_object_paths = [
         path
         for path in object_paths
@@ -263,7 +145,7 @@ def _link_unix(
         "-e",
         "_start",
         "-T",
-        str(vuifile),
+        str(cf_dir / "vuifile"),
         *(str(path) for path in filtered_object_paths),
         str(conf_o),
         str(fsconf_o),
