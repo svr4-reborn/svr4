@@ -52,8 +52,14 @@
 #include <sys/stat.h>
 #include "inst.h"
 #include "defines.h"
+#if defined(HOST_IDCMD_BUILD)
+#ifndef OMAXMIN
+#define OMAXMIN 0xffUL
+#endif
+#else
 #include "sys/conf.h"
 #include <sys/mkdev.h>
+#endif
 
 /* System table. This structure stores a line from sdevice.
  * The field 'type', has been moved to struct t2 and renamed 'inttype'
@@ -893,7 +899,7 @@ rdmdevice()
         register int l;
         register FILE *fp;
         register struct t2 *q;
-        register struct multmaj mm;
+        struct multmaj mm;
 	int start, end;
 
         fp = open1(mdfile, "r", IN);
@@ -1579,7 +1585,7 @@ int l, u, exist, min;
 char *dev, *maj;
 {
         struct t1 *p;
-	minor_t highminor = OMAXMIN;
+        unsigned long highminor = OMAXMIN;
 	struct t3 *maxminor;
 
         if (l != u) {
@@ -1598,10 +1604,10 @@ char *dev, *maj;
         }
 	if (INSTRING(p->master->type, NEWDRV)) {
 		if ((maxminor = pfind("MAXMINOR")) == (struct t3 *)NULL) {
-			sprintf(errbuf, NOMAXMINOR, (u_long)highminor);
+                        sprintf(errbuf, NOMAXMINOR, highminor);
 			warning(0);
 		} else 
-			highminor = (minor_t)(maxminor->conf?
+                        highminor = (unsigned long)(maxminor->conf?
 					      maxminor->value : maxminor->def);
 	}
         if (min < -1 || min > (int)highminor) {
