@@ -34,6 +34,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('--build-root', required=True)
     parser.add_argument('--system-root', required=True)
     parser.add_argument('--cpp', default='cpp')
+    parser.add_argument('--as', dest='assembler', default='as')
     parser.add_argument('--ld', default='ld')
     return parser.parse_args()
 
@@ -43,7 +44,7 @@ def run(command: list[str], cwd: Path | None = None) -> None:
     subprocess.run(command, cwd=cwd, check=True)
 
 
-def compile_source(workspace_root: Path, fp_root: Path, build_root: Path, cpp: str, source_name: str) -> Path:
+def compile_source(workspace_root: Path, fp_root: Path, build_root: Path, cpp: str, assembler: str, source_name: str) -> Path:
     source_path = fp_root / source_name
     stem = source_path.stem
     preprocessed = build_root / f'{stem}.i'
@@ -59,13 +60,7 @@ def compile_source(workspace_root: Path, fp_root: Path, build_root: Path, cpp: s
         str(preprocessed),
     ])
     shutil.copyfile(preprocessed, sanitized)
-    run([
-        sys.executable,
-        str(workspace_root / 'tools/legacy_as.py'),
-        '-o',
-        str(object_path),
-        str(sanitized),
-    ])
+    run([assembler, '--32', '-o', str(object_path), str(sanitized)])
     return object_path
 
 
@@ -122,7 +117,7 @@ def main() -> int:
         shutil.rmtree(build_root)
     build_root.mkdir(parents=True, exist_ok=True)
 
-    objects = [compile_source(workspace_root, fp_root, build_root, args.cpp, name) for name in FP_SOURCES]
+    objects = [compile_source(workspace_root, fp_root, build_root, args.cpp, args.assembler, name) for name in FP_SOURCES]
     emulator = link_emulator(workspace_root, fp_root, build_root, args.ld, objects)
     install_emulator(system_root, emulator)
     return 0

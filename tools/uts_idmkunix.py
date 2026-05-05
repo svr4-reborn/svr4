@@ -53,7 +53,9 @@ def _compile_source(source_path: Path, object_path: Path, cc: str, cflags: list[
     return object_path
 
 
-def _compile_entry(entry_path: Path, cc: str, cflags: list[str], include_dirs: list[str]) -> Path:
+def _compile_entry(entry_path: Path, cc: str, cflags: list[str], include_dirs: list[str]) -> Path | None:
+    if not entry_path.exists():
+        return None
     if entry_path.suffix != ".c":
         return entry_path
     return _compile_source(entry_path, entry_path.with_suffix(".o"), cc, cflags, include_dirs)
@@ -139,6 +141,31 @@ def _prepare_gnu_vuifile(vuifile: Path) -> Path:
     for region_name, lowered_region in regions.items():
         normalized_text = re.sub(rf">\s*{region_name}\b", f"> {lowered_region}", normalized_text)
 
+    if not re.search(r"\betext\s*=", normalized_text):
+        normalized_text = re.sub(
+            r"(\.text\s*:\s*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
+            r"\1\n  etext = .;\2",
+            normalized_text,
+            count=1,
+            flags=re.S,
+        )
+    if not re.search(r"\bedata\s*=", normalized_text):
+        normalized_text = re.sub(
+            r"(\.data[^\{]*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
+            r"\1\n  edata = .;\2",
+            normalized_text,
+            count=1,
+            flags=re.S,
+        )
+    if not re.search(r"\bend\s*=", normalized_text):
+        normalized_text = re.sub(
+            r"(\.bss[^\{]*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
+            r"\1\n  end = .;\n  _end = .;\2",
+            normalized_text,
+            count=1,
+            flags=re.S,
+        )
+
     gnu_vuifile = vuifile.with_name("vuifile.gnu")
     gnu_vuifile.write_text(normalized_text)
     return gnu_vuifile
@@ -154,6 +181,14 @@ def _link_unix(
     vector_o: Path,
 ) -> None:
     vuifile = _prepare_gnu_vuifile(cf_dir / "vuifile")
+    filtered_object_paths = [
+        path
+        for path in object_paths
+        if path.as_posix() not in {
+            (cf_dir.parent / "pack.d" / "kernel" / "start.o").as_posix(),
+            (cf_dir.parent / "pack.d" / "kernel" / "locore.o").as_posix(),
+        }
+    ]
     linker = ld
     if Path(ld).name == "ld":
         bfd_linker = shutil.which("ld.bfd")
@@ -170,7 +205,7 @@ def _link_unix(
         "_start",
         "-T",
         str(vuifile),
-        *(str(path) for path in object_paths),
+        *(str(path) for path in filtered_object_paths),
         str(conf_o),
         str(fsconf_o),
         str(vector_o),

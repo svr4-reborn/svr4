@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -29,7 +30,17 @@ def _compile_source(cc: str, cflags: list[str], include_dirs: list[str], source_
 
 def _link_driver(ld: str, input_paths: list[Path], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [ld, "-r", *[str(path) for path in input_paths], "-o", str(output_path)]
+    linker = ld
+    command = [linker]
+    if Path(ld).name == "ld":
+        bfd_linker = shutil.which("ld.bfd")
+        if bfd_linker is not None:
+            linker = bfd_linker
+        command = [linker, "-m", "elf_i386", "-Ur"]
+    else:
+        command = [linker, "-Ur"]
+    command.extend(str(path) for path in input_paths)
+    command.extend(["-o", str(output_path)])
     subprocess.run(command, check=True, capture_output=True, text=True)
 
 
@@ -72,28 +83,6 @@ def main() -> int:
             )
             continue
 
-        space_c = package.get("space_c")
-        if configured and space_c:
-            space_path = Path(str(space_c))
-            if space_path.is_file():
-                space_object = pack_dir / "Space.o"
-                try:
-                    _compile_source(args.cc, list(args.cflag), list(args.include_dir), space_path, space_object)
-                except subprocess.CalledProcessError as exc:
-                    casted_failed = report["failed"]
-                    assert isinstance(casted_failed, list)
-                    casted_failed.append(
-                        {
-                            "name": name,
-                            "configured": configured,
-                            "stage": "compile-space",
-                            "source": str(space_path),
-                            "stderr": exc.stderr,
-                        }
-                    )
-                    continue
-                support_objects.append(space_object)
-
         stubs_c = package.get("stubs_c")
         if stubs_c and ((not configured) or not implementation_objects):
             stubs_path = Path(str(stubs_c))
@@ -119,6 +108,8 @@ def main() -> int:
 
         link_inputs = [*implementation_objects, *support_objects]
         if not link_inputs:
+            if driver_object.exists():
+                driver_object.unlink()
             casted_missing = report["missing_inputs"]
             assert isinstance(casted_missing, list)
             casted_missing.append({

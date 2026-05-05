@@ -82,6 +82,7 @@ profiles:
       - -D_KERNEL
       - -DSYSV
       - -DSVR40
+      - -DWEITEK
       - -DAT386
 
   fs-at386:
@@ -89,6 +90,7 @@ profiles:
       - -I..
       - -I../..
       - -D_KERNEL
+      - -DQUOTA
       - -DAT386
 
   disp-at386:
@@ -289,7 +291,7 @@ targets:
               cat >"{system_root}/usr/bin/idas" <<'EOF'
               #!/bin/sh
               set -eu
-              exec python3 "{workspace_root}/tools/legacy_as.py" "$@"
+              exec as --32 "$@"
               EOF
               cat >"{system_root}/usr/bin/idld" <<'EOF'
               #!/bin/sh
@@ -413,7 +415,11 @@ targets:
               exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin "$@"
               EOF
               chmod 755 "$legacy_bin/cc"
-              cp "{workspace_root}/tools/legacy_as.py" "$legacy_bin/as"
+              cat >"$legacy_bin/as" <<'EOF'
+              #!/bin/sh
+              set -eu
+              exec as --32 "$@"
+              EOF
               chmod 755 "$legacy_bin/as"
               cp "{workspace_root}/tools/legacy_ld.py" "$legacy_bin/ld"
               chmod 755 "$legacy_bin/ld"
@@ -717,6 +723,7 @@ targets:
           - --cflag=-I..
           - --cflag=-D_KERNEL
           - --cflag=-DAT386
+          - --cflag=-DVPIX
           - --cflag=-DWEITEK
           - --cflag=-DWEITEK_EMULATOR
           - --cpp-flag=-P
@@ -724,6 +731,7 @@ targets:
           - --cpp-flag=-D_KERNEL
           - --cpp-flag=-DLOCORE
           - --cpp-flag=-DAT386
+          - --cpp-flag=-DVPIX
           - --cpp-flag=-DWEITEK
           - --cpp-flag=-DWEITEK_EMULATOR
 
