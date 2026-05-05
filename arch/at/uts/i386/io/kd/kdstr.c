@@ -601,7 +601,7 @@ mblk_t *mp;
 #ifdef EVGA
 			   /* kdv_setdisp() sets vp->v_cvmode to new mode */
 			   evga_ext_init(vp->v_cvmode);
-#endif EVGA
+#endif /* EVGA */
 			}
 			ws_preclose(&Kdws, chp);
 			kdvt_close(chp);

@@ -732,18 +732,21 @@ giofont:
 
 		case KD_MONO:
 		case KD_HERCULES:
-			dinfo.vaddr = dinfo.physaddr = (caddr_t) MONO_BASE;
+			dinfo.physaddr = MONO_BASE;
+			dinfo.vaddr = (caddr_t) dinfo.physaddr;
 			dinfo.size = MONO_SIZE;
 			break;
 		case KD_CGA:
-			dinfo.vaddr = dinfo.physaddr = (caddr_t) COLOR_BASE;
+			dinfo.physaddr = COLOR_BASE;
+			dinfo.vaddr = (caddr_t) dinfo.physaddr;
 			dinfo.size = COLOR_SIZE;
 			break;
 		case KD_VGA:
 		case KD_EGA: /* Assume as we do for MONOAPA2 that the EGA card
 			      * has 128K of RAM. Still have the fingers crossed
 			      * Not an issue for VGA -- we always have 128K */
-			dinfo.vaddr = dinfo.physaddr = EGA_BASE;
+			dinfo.physaddr = EGA_BASE;
+			dinfo.vaddr = (caddr_t) dinfo.physaddr;
 			dinfo.size = EGA_LGSIZE;
 			break;
 		default:

@@ -323,6 +323,14 @@ static char *fd_drverr[] =
 struct dma_cb	*fdcb;
 struct dma_buf	*dbuf;
 
+void	fdbreakup();
+int	fdstrategy();
+static void	fdwait();
+static void	fdnoflop();
+static void	fdtimer();
+static void	fdrawio();
+static void	fdmtnio();
+
 #ifdef MERGE386
 
 extern	int	floppy_free();
@@ -525,7 +533,7 @@ struct cred *cred_p;
 	bp = fdtab.b_actf;
 	while (bp != NULL) {
 		if (bp->b_edev == dev) {
-			sleep(&fdtab.b_actf,PRIBIO);
+			sleep((caddr_t)&fdtab.b_actf,PRIBIO);
 			bp = fdtab.b_actf;
 		} else
 			bp = bp->av_forw;
@@ -544,13 +552,11 @@ struct cred *cred_p;
 }
 
 
+void
 fdbreakup(bp)
 struct buf	*bp;
 {
-	int	fdstrategy();
-
-	dma_pageio(fdstrategy, bp);
-	return(0);
+	dma_pageio((void (*)())fdstrategy, bp);
 }
 
 fdread(dev,uio_p,cred_p)
@@ -769,7 +775,7 @@ int *rval_p;
 			if (rbp -> b_bcount != 0) {
 				while (fdbufstruct.fbs_flags & B_BUSY) {
 					fdbufstruct.fbs_flags |= B_WANTED;
-					sleep (&fdbufstruct, PRIBIO);
+					sleep ((caddr_t)&fdbufstruct, PRIBIO);
 				}
 				fdbufstruct.fbs_flags |= B_BUSY;
 
@@ -828,7 +834,7 @@ int *rval_p;
 				fdbufstruct.fbs_flags &= ~B_BUSY;
 				if (fdbufstruct.fbs_flags & B_WANTED) {
 					fdbufstruct.fbs_flags &= ~B_WANTED;
-					wakeup (&fdbufstruct);
+					wakeup ((caddr_t)&fdbufstruct);
 				}
 			}
 			break;
@@ -993,7 +999,7 @@ fdstart()
 		fdcs.fd_sector = (i % (int)f->fd_nsects) + 1; /* sectors start at 1 */
 		fdcs.fd_track += f->fd_cylskp;
 	}
-	fdcst.fd_addr = vtop(paddr(bp), bp->b_proc);
+	fdcst.fd_addr = vtop((caddr_t)paddr(bp), bp->b_proc);
 	bp->b_resid = fdcst.fd_btot;
 
 	{
@@ -1030,7 +1036,6 @@ register struct buf *bp;
 	int	oldpri;
 	int	cmdsiz;
 	int	retval;
-	int	fdwait(), fdtimer();
 
 #ifdef DEBUG
 	if (fddebug)
@@ -1049,7 +1054,7 @@ register struct buf *bp;
 		fd_curmotors |= (ENABMOTOR << n);
 		fdcst.fd_curdrv = n;
 		outb(FDCTRL, fd_curmotors|ENABINT|NORESET|n);
-		timeout(fdwait, bp, f->fd_mst);
+		timeout(fdwait, (caddr_t)bp, f->fd_mst);
 		if (fdt_running == 0)
 			timeout(fdtimer, (caddr_t)0, MTIME);
 		retval = 0;
@@ -1158,7 +1163,7 @@ seek:
 			goto done;
 		f->fd_curcyl = fdcs.fd_track;
 		fdcst.fd_state = XFER_BEG;
-		timeout(fdwait, bp, f->fd_hst);
+		timeout(fdwait, (caddr_t)bp, f->fd_hst);
 		retval = 0;
 		goto done;
 	}
@@ -1306,7 +1311,7 @@ register struct buf *bp;
 	fdtab.b_active = 0;
 	fdtab.b_errcnt = 0;
 	fdtab.b_actf = bp->av_forw;
-	wakeup(&fdtab.b_actf);
+	wakeup((caddr_t)&fdtab.b_actf);
 	if ((bp->b_resid += (bp->b_bcount - fdcst.fd_btot)) != 0){
 		bp->b_flags |= B_ERROR;
 		bp->b_error = EIO;
@@ -1397,6 +1402,7 @@ int type;
  * floppy drive to perform something that takes too
  * long to busy wait for.
  */
+static void
 fdwait(bp)
 register struct buf *bp;
 {
@@ -1408,6 +1414,7 @@ register struct buf *bp;
 	}
 }
 
+static void
 fdnoflop(f)
 register struct fdstate *f;
 {
@@ -1425,9 +1432,10 @@ register struct fdstate *f;
 		}
 		fdstart();
 	} else
-		timeout(fdnoflop, f, ETIMOUT);
+		timeout(fdnoflop, (caddr_t)f, ETIMOUT);
 }
 
+static void
 fdtimer(dummy)
 {
 	register int i;
@@ -1478,7 +1486,7 @@ register struct fdstate *f;
 {
 	cmn_err(CE_WARN,"FD(%d): No diskette present - Please insert",fdcst.fd_curdrv);
 	fdcst.fd_etimer = LOADTIM;
-	timeout(fdnoflop, f, ETIMOUT);
+	timeout(fdnoflop, (caddr_t)f, ETIMOUT);
 }
 
 
@@ -1586,13 +1594,13 @@ int	size;
 }
 
 
+static void
 fdrawio(bp)
 register struct buf *bp;
 {
 	int rnum;			/* number of result bytes */
 	register int n = UNIT(bp->b_edev);
 	int oldpri;
-	int fdtimer();
 
 	/*
 	 * This function is called directly from fdstart() when a bp
@@ -1611,10 +1619,10 @@ register struct buf *bp;
 		fdcst.fd_curdrv = n;
 		fd_curmotors |= (ENABMOTOR << n);
 		outb(FDCTRL, fd_curmotors | ENABINT | NORESET | n);
-		timeout(fdrawio, bp, fd[n].fd_mst);	/* wait for motor */
+		timeout(fdrawio, (caddr_t)bp, fd[n].fd_mst);	/* wait for motor */
 		if (fdt_running == 0)
 			timeout(fdtimer, (caddr_t)0, MTIME);
-		return(0);
+		return;
 	}
 	if (fdcst.fd_curdrv != n) {
 		fdcst.fd_curdrv = n;
@@ -1668,7 +1676,7 @@ a:
 		}
 		goto finish;
 	default:
-		return(0);
+		return;
 	}
 finish:
 	fdtab.b_active = 0;
@@ -1676,16 +1684,15 @@ finish:
 	bp->b_flags |= B_DONE;
 	wakeup((caddr_t)bp);		/* wake up fdioctl */
 	fdstart();
-	return(0);
 }
 
+static void
 fdmtnio(bp)
 register struct buf *bp;
 {
 	int rnum;			/* number of result bytes */
 	register int n = UNIT(bp->b_edev);
 	int oldpri;
-	int fdtimer();
 
 	oldpri = splhi();
 	if (fd_mtimer[n]) /* if motor's running, keep it going */
@@ -1698,7 +1705,7 @@ register struct buf *bp;
 		fdcst.fd_curdrv = n;
 		fd_curmotors |= (ENABMOTOR << n);
 		outb(FDCTRL, fd_curmotors | ENABINT | NORESET | n);
-		timeout(fdmtnio, bp, fd[n].fd_mst);	/* wait for motor */
+		timeout(fdmtnio, (caddr_t)bp, fd[n].fd_mst);	/* wait for motor */
 		if (fdt_running == 0)
 			timeout(fdtimer, (caddr_t)0, MTIME);
 		return;
@@ -1766,7 +1773,7 @@ unsigned char drv, head, cyl;
 	struct buf *bp;
 
 	while (fdmtnbusy & (0x01 << drv))
-		sleep(&fdmtn[drv], PRIBIO);
+		sleep((caddr_t)&fdmtn[drv], PRIBIO);
 	fdmtnbusy |= (0x01 << drv);
 
 	fdmtn[drv].fr_cmd[0] = SEEK; 
@@ -1794,7 +1801,7 @@ unsigned char drv, head, cyl;
 
 
 	fdmtnbusy &= ~(0x01 << drv);
-	wakeup(&fdmtn[drv]);
+	wakeup((caddr_t)&fdmtn[drv]);
 	return(rtn);
 }
 
@@ -1805,7 +1812,7 @@ unsigned char drv;
 	struct buf *bp;
 
 	while (fdmtnbusy & (0x01 << drv))
-		sleep(&fdmtn[drv], PRIBIO);
+		sleep((caddr_t)&fdmtn[drv], PRIBIO);
 	fdmtnbusy |= (0x01 << drv);
 
 	fdmtn[drv].fr_cmd[0] = REZERO;
@@ -1831,7 +1838,7 @@ unsigned char drv;
 		rtn = 0;
 
 	fdmtnbusy &= ~(0x01 << drv);
-	wakeup(&fdmtn[drv]);
+	wakeup((caddr_t)&fdmtn[drv]);
 	return(rtn);
 }
 
@@ -1842,7 +1849,7 @@ unsigned char drv, head;
 	struct buf *bp;
 
 	while (fdmtnbusy & (0x01 << drv))
-		sleep(&fdmtn[drv], PRIBIO);
+		sleep((caddr_t)&fdmtn[drv], PRIBIO);
 	fdmtnbusy |= (0x01 << drv);
 
 	fdmtn[drv].fr_cmd[0] = SENSE_DRV;
@@ -1867,7 +1874,7 @@ unsigned char drv, head;
 		rtn = fdmtn[drv].fr_result[0];
 
 	fdmtnbusy &= ~(0x01 << drv);
-	wakeup(&fdmtn[drv]);
+	wakeup((caddr_t)&fdmtn[drv]);
 	return(rtn);
 }
 
@@ -1948,7 +1955,7 @@ unsigned char 	drv, head;
 	struct buf *bp;
 
 	while (fdmtnbusy & (0x01 << drv))
-		sleep(&fdmtn[drv], PRIBIO);
+		sleep((caddr_t)&fdmtn[drv], PRIBIO);
 	fdmtnbusy |= (0x01 << drv);
 
 	fdmtn[drv].fr_cmd[0] = DEN_MFM | READID; 
@@ -1975,7 +1982,7 @@ unsigned char 	drv, head;
 		rtn = (fdmtn[drv].fr_result[3] << 8) | fdmtn[drv].fr_result[6];
 
 	fdmtnbusy &= ~(0x01 << drv);
-	wakeup(&fdmtn[drv]);
+	wakeup((caddr_t)&fdmtn[drv]);
 	return(rtn);
 }
 
@@ -1987,7 +1994,7 @@ unsigned char drv;
 	struct buf *bp;
 
 	while (fdmtnbusy & (0x01 << drv))
-		sleep(&fdmtn[drv], PRIBIO);
+		sleep((caddr_t)&fdmtn[drv], PRIBIO);
 	fdmtnbusy |= (0x01 << drv);
 
 	fdmtn[drv].fr_cmd[0] = SENSE_DSKCHG; 
@@ -2010,7 +2017,7 @@ unsigned char drv;
 	rtn = fdmtn[drv].fr_result[0];
 
 	fdmtnbusy &= ~(0x01 << drv);
-	wakeup(&fdmtn[drv]);
+	wakeup((caddr_t)&fdmtn[drv]);
 	return(rtn);
 }
 
@@ -2025,7 +2032,7 @@ char	bps, eot, gpl, dtl;
 	long onepage;
 
 	while (fdmtnbusy & (0x01 << drv))
-		sleep(&fdmtn[drv], PRIBIO);
+		sleep((caddr_t)&fdmtn[drv], PRIBIO);
 	fdmtnbusy |= (0x01 << drv);
 
 	fdmtn[drv].fr_cmd[0] = DEN_MFM | RDCMD; 
@@ -2051,7 +2058,7 @@ char	bps, eot, gpl, dtl;
 	if (va == NULL) {
 		cmn_err(CE_NOTE,"Unable to get kernel pages\n");
 		fdmtnbusy &= ~(0x01 << drv);
-		wakeup(&fdmtn[drv]);
+		wakeup((caddr_t)&fdmtn[drv]);
 		return(FE_READ);
 	}
 	bp->b_un.b_addr = va;
@@ -2070,7 +2077,7 @@ char	bps, eot, gpl, dtl;
 		rtn = 0;
 
 	fdmtnbusy &= ~(0x01 << drv);
-	wakeup(&fdmtn[drv]);
+		wakeup((caddr_t)&fdmtn[drv]);
 	return(rtn);
 }
 

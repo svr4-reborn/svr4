@@ -138,6 +138,8 @@ static struct qinit asy_wint = {
 struct streamtab asyinfo = { 
 	&asy_rint, &asy_wint, NULL, NULL};
 
+/* forward declarations for local functions */
+static int asydointr(int mdev);
 
 /*
  * Wakeup sleep function calls sleeping for a STREAMS buffer
@@ -1290,9 +1292,8 @@ unsigned int	vec;
 	}
 }
 
-static
-asydointr(mdev)
-	register		mdev;
+static int
+asydointr(int mdev)
 {
 	register mblk_t		*bp;
 	struct strtty		*tp;

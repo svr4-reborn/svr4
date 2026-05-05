@@ -309,46 +309,33 @@ static void hdtimeout();
  *	}
  */
 
-asm int table_scan(table, value, length)
+int
+table_scan(table, value, length)
+	int	*table, value, length;
 {
-%mem table,value,length; lab l;
-	pushl	%edi
-	movl	length, %ecx
-	movl	%ecx, %edx
-	movl	value, %eax
-	movl	table, %edi
-	repnz
-	scasl
-	movl	$-1, %eax
-	jne	l
-	movl	%edx, %eax
-	subl	%ecx, %eax
-	decl	%eax
-l:
-	popl	%edi
+	int	count;
+
+	for (count = length; count-- > 0;) {
+		if (*table++ == value)
+			return length - count - 1;
+	}
+	return -1;
 }
 
-asm int bit_test(bitmap, bitno)
+int
+bit_test(bitmap, bitno)
+	char	*bitmap;
+	int	bitno;
 {
-%mem bitmap,bitno;
-	xorl	%eax, %eax
-	movl	bitno, %ecx
-	movl	bitmap, %edx
-	btl	%ecx, (%edx)
-	setc	%al
+	return bitmap[bitno >> 3] & (1 << (bitno & 7));
 }
 
-asm void bit_set(bitmap, bitno)
+void
+bit_set(bitmap, bitno)
+	char	*bitmap;
+	int	bitno;
 {
-%mem bitmap,bitno;
-	movl	bitno, %eax
-	movl	bitmap, %edx
-	btsl	%eax, (%edx)
-%mem bitmap; reg bitno;
-	movl	bitmap, %edx
-	btsl	bitno, (%edx)
-%reg bitmap,bitno;
-	btsl	bitno, (bitmap)
+	bitmap[bitno >> 3] |= (1 << (bitno & 7));
 }
 
 struct cur_req {
@@ -1060,7 +1047,7 @@ register struct buf *bp;
 	}
 
 	/* Calculate the physical cylinder number of the request. */
-	*((ushort *)&bp->cylin) = (bp->b_blkno + hdp->p_start) /
+	bp->b_cylin = (bp->b_blkno + hdp->p_start) /
 	    (daddr_t)(hdi->hd_nsecs * hdi->hd_nhds);
 	bp->av_forw = NULL;
 	drv_getparm(LBOLT, &bp->b_start);  /* time in 1/60 sec. since boot */
@@ -1076,16 +1063,16 @@ register struct buf *bp;
 	if (hdu->b_actf == NULL)
 		hdu->b_actf = bp;
 	else if (hdi->hd_latest &&
-			(ushort)hdi->hd_latest->cylin == (ushort)bp->cylin) {
+			hdi->hd_latest->b_cylin == bp->b_cylin) {
 		bp->av_forw = hdi->hd_latest->av_forw;
 		hdi->hd_latest->av_forw = bp;
 	} else {
 		int	s1, s2;
 
 		for (curbp = hdu->b_actf; nextbp = curbp->av_forw; curbp = nextbp) {
-			if ((s1 = (ushort)curbp->cylin - (ushort)bp->cylin)<0)
+			if ((s1 = curbp->b_cylin - bp->b_cylin) < 0)
 				s1 = -s1;
-			if ((s2 = (ushort)curbp->cylin - (ushort)nextbp->cylin)<0)
+			if ((s2 = curbp->b_cylin - nextbp->b_cylin) < 0)
 				s2 = -s2;
 			if (s1 < s2)
 				break;

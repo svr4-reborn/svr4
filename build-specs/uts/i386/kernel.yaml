@@ -546,6 +546,7 @@ targets:
         cwd: vm
         output_dir: "{obj_root}/vm"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -562,6 +563,7 @@ targets:
         cwd: disp
         output_dir: "{obj_root}/disp"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -578,6 +580,7 @@ targets:
         cwd: vx
         output_dir: "{obj_root}/vx"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -594,6 +597,7 @@ targets:
         cwd: exec
         output_dir: "{obj_root}/exec"
         continue_on_error: false
+        parallel: true
         discover:
           recursive: true
           extensions:
@@ -611,6 +615,7 @@ targets:
         cwd: io
         output_dir: "{obj_root}/io/core"
         continue_on_error: false
+        parallel: true
         discover:
           recursive: true
           extensions:
@@ -633,6 +638,7 @@ targets:
         cwd: io/ws
         output_dir: "{obj_root}/io/ws"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -649,6 +655,7 @@ targets:
         cwd: io/kd
         output_dir: "{obj_root}/io/kd"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
