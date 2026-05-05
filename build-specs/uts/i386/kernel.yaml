@@ -232,6 +232,7 @@ targets:
           - --cflag=-fcommon
           - --cflag=-fno-builtin
           - --cflag=-O2
+          - --cflag=-m32
           - --cflag=-D_KERNEL
           - --cflag=-DAT386
           - --cflag=-DWEITEK
@@ -265,6 +266,7 @@ targets:
   stage-idbuild-root-at386:
     description: Stage the synthetic conf tree into a ROOT-shaped directory suitable for the historical idbuild script.
     depends_on:
+      - driver-packages-at386
       - master-tree-at386
       - idcmd-tools-at386
     steps:
@@ -277,30 +279,102 @@ targets:
               rm -rf "{system_root}/etc/conf"
               mkdir -p "{system_root}/etc"
               cp -a "{conf_root}" "{system_root}/etc/conf"
-              mkdir -p "{conf_bin}"
+              mkdir -p "{conf_bin}" "{system_root}/usr/bin" "{system_root}/usr/lib" "{system_root}/bin" "{system_root}/lib"
               cp "cmd/idcmd/idbuild" "{conf_bin}/idbuild"
               chmod 755 "{conf_bin}/idbuild"
               for tool in idconfig idmkunix; do
                 cp "{idcmd_tool_root}/$tool" "{conf_bin}/$tool"
                 chmod 755 "{conf_bin}/$tool"
               done
+              cat >"{system_root}/usr/bin/idas" <<'EOF'
+              #!/bin/sh
+              set -eu
+              exec python3 "{workspace_root}/tools/legacy_as.py" "$@"
+              EOF
+              cat >"{system_root}/usr/bin/idld" <<'EOF'
+              #!/bin/sh
+              set -eu
+              if [ "$#" -gt 0 ] && [ "$1" = "-V" ]; then
+                printf "%s\n" "'(SCDE) 5.0'"
+                exit 0
+              fi
+              exec python3 "{workspace_root}/tools/legacy_ld.py" "$@"
+              EOF
+              cat >"{system_root}/usr/bin/idcc" <<'EOF'
+              #!/usr/bin/env python3
+              import os
+              import sys
+
+              filtered = [
+                  arg for arg in sys.argv[1:]
+                  if not (arg.startswith('-Y0,') or arg.startswith('-Y2,') or arg.startswith('-Ya,'))
+              ]
+              os.execvp("{cc}", ["{cc}", "-m32", "-std=gnu89", "-fcommon", "-fno-builtin", *filtered])
+              EOF
+              cat >"{system_root}/usr/lib/idcpp" <<'EOF'
+              #!/bin/sh
+              set -eu
+              exec "{cpp}" "$@"
+              EOF
+              cat >"{system_root}/usr/lib/idacomp" <<'EOF'
+              #!/bin/sh
+              echo "idacomp wrapper should not be used in ELF mode" >&2
+              exit 1
+              EOF
+              chmod 755 "{system_root}/usr/bin/idas" "{system_root}/usr/bin/idld" "{system_root}/usr/bin/idcc" "{system_root}/usr/lib/idcpp" "{system_root}/usr/lib/idacomp"
+              ln -sf ../usr/bin/idas "{system_root}/bin/idas"
+              ln -sf ../usr/bin/idld "{system_root}/bin/idld"
+              ln -sf ../usr/bin/idcc "{system_root}/bin/idcc"
+              ln -sf ../usr/lib/idcpp "{system_root}/lib/idcpp"
+              ln -sf ../usr/lib/idacomp "{system_root}/lib/idacomp"
 
   idbuild-at386:
-    description: Invoke the staged historical idbuild flow when idconfig and idmkunix are available in the staged conf/bin directory.
+    description: Build the final AT386 unix image with the Python idbuild/idmkunix replacements over the generated manifest and pack.d tree.
     depends_on:
-      - stage-idbuild-root-at386
+      - driver-packages-at386
     steps:
       - kind: command
         argv:
-          - sh
-          - -eu
-          - -c
-          - |
-              if [ ! -x "{conf_bin}/idconfig" ] || [ ! -x "{conf_bin}/idmkunix" ]; then
-                echo "Skipping idbuild-at386: stage executable idconfig and idmkunix into {conf_bin} first."
-                exit 0
-              fi
-              ROOT="{system_root}" sh "{conf_bin}/idbuild"
+          - python3
+          - tools/uts_idbuild.py
+          - --manifest
+          - "{simple_idconfig_manifest}"
+          - --cc
+          - "{cc}"
+          - --ld
+          - "{ld}"
+          - --output
+          - "{cf_dir}/unix"
+          - --cflag
+          - -std=gnu89
+          - --cflag
+          - -fcommon
+          - --cflag
+          - -fno-builtin
+          - --cflag
+          - -O2
+          - --cflag
+          - -m32
+          - --cflag
+          - -D_KERNEL
+          - --cflag
+          - -DAT386
+          - --cflag
+          - -DWEITEK
+          - --cflag
+          - -DWEITEK_EMULATOR
+          - --cflag
+          - -DVPIX
+          - --cflag
+          - -DSYSV
+          - --cflag
+          - -DSVR40
+          - --include-dir
+          - "{cf_dir}"
+          - --include-dir
+          - "{workspace_root}/arch/at/uts/i386"
+          - --include-dir
+          - "{workspace_root}/uts/i386"
 
   boot-at386:
     description: Build and stage the historical AT386 bootstrap family under uts/i386/boot into the synthetic system-root.
@@ -360,46 +434,24 @@ targets:
           - "{cc}"
       - kind: command
         argv:
-          - sh
-          - -eu
-          - -c
-          - |
-              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
-              export PATH="$legacy_bin:$PATH"
-              mkdir -p "{system_root}/etc"
-              cd "{boot_stage_root}/bootlib"
-              make -f bootlib.mk \
-                "CC=cc" \
-                "AS=as" \
-                "LD={ld}" \
-                "CPP={cpp}" \
-                "CCSTYPE=ELF" \
-                "MORECPP=-DAT386 -DWEITEK -DWEITEK_EMULATOR -I{workspace_root}/head -I{workspace_root}/cmd/sgs/inc/common" \
-                "INCRT={workspace_root}/uts/i386" \
-                "BUS=AT386" \
-                "ARCH=AT386" \
-                install
-              cd "{boot_stage_at386_root}"
-              make \
-                "CC=cc" \
-                "AS=as" \
-                "LD={ld}" \
-                "CPP={cpp}" \
-                "CCSTYPE=ELF" \
-                "STRIP=strip" \
-                "MORECPP=-DAT386 -DWEITEK -DWEITEK_EMULATOR -I{workspace_root}/head -I{workspace_root}/cmd/sgs/inc/common" \
-                "INCRT={workspace_root}/uts/i386" \
-                "BUS=AT386" \
-                "ARCH=AT386" \
-                tools fdboot hdboot
-              install -d "{system_root}/etc/default"
-              install -m 0644 "fdboot" "{system_root}/etc/.fboot"
-              install -m 0644 "hdboot" "{system_root}/etc/.wboot"
-              install -m 0644 "default/default.at386" "{system_root}/etc/default/default.at386"
-              install -m 0644 "default/default.cpq" "{system_root}/etc/default/default.cpq"
-              install -m 0644 "default/default.att" "{system_root}/etc/default/default.att"
-              install -m 0644 "default/default.att512" "{system_root}/etc/default/default.att512"
-              cp "default/default.at386" "{system_root}/etc/default/boot"
+          - python3
+          - tools/uts_build_boot.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --boot-root
+          - "{boot_stage_root}"
+          - --build-root
+          - "{builddir}/uts/i386/boot/build"
+          - --system-root
+          - "{system_root}"
+          - --cc
+          - "{cc}"
+          - --cpp
+          - "{cpp}"
+          - --as
+          - as
+          - --strip
+          - strip
       - kind: command
         argv:
           - python3
@@ -432,47 +484,9 @@ targets:
           - -eu
           - -c
           - |
-              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
-              mkdir -p "$legacy_bin" "{system_root}/etc" "{system_root}/sbin"
-              cat >"$legacy_bin/cc" <<'EOF'
-              #!/bin/sh
-              out=
-              src=
-              prev=
-              for arg in "$@"; do
-                if [ "$prev" = "-o" ]; then
-                  out="$arg"
-                fi
-                prev="$arg"
-                src="$arg"
-              done
-              if [ "${{src##*/}}" = "rmhdr.c" ] && [ -n "$out" ]; then
-                cat >"$out" <<'EOS'
-              #!/bin/sh
-              set -eu
-              objcopy -O binary "$1" "$2"
-              EOS
-                chmod 755 "$out"
-                exit 0
-              fi
-              if [ "${{src##*.}}" = "s" ] || [ "${{src##*.}}" = "S" ] || [ "${{src##*.}}" = "i" ]; then
-                if [ -z "$out" ]; then
-                  out="${{src%.*}}.o"
-                fi
-                exec python3 "{workspace_root}/tools/legacy_as.py" -o "$out" "$src"
-              fi
-              exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin "$@"
-              EOF
-              chmod 755 "$legacy_bin/cc"
-              cp "{workspace_root}/tools/legacy_as.py" "$legacy_bin/as"
-              chmod 755 "$legacy_bin/as"
-              cp "{workspace_root}/tools/legacy_ld.py" "$legacy_bin/ld"
-              chmod 755 "$legacy_bin/ld"
-              export PATH="$legacy_bin:$PATH"
               stage_root="{legacy_stage_root}"
               mkdir -p "$stage_root/uts/i386"
-              rm -rf "$stage_root/tools" "{fp_stage_root}"
-              cp -a "{workspace_root}/tools" "$stage_root/"
+              rm -rf "{fp_stage_root}"
               cp -a "{workspace_root}/uts/i386/fp" "$stage_root/uts/i386/"
       - kind: command
         argv:
@@ -486,31 +500,20 @@ targets:
           - "{cc}"
       - kind: command
         argv:
-          - sh
-          - -eu
-          - -c
-          - |
-              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
-              export PATH="$legacy_bin:$PATH"
-              mkdir -p "{system_root}/etc" "{system_root}/sbin"
-              cd "{fp_stage_root}"
-              make -f fp.mk \
-                "ROOT={system_root}" \
-                "CC=cc" \
-                "AS=as" \
-                "LD={ld}" \
-                "CPP={cpp}" \
-                "CCSTYPE=ELF" \
-                "CFLAGS=-O -I{workspace_root}/uts/i386 -D_KERNEL -DAT386 -DWEITEK -DWEITEK_EMULATOR" \
-                "MORECPP=-DAT386 -DWEITEK -DWEITEK_EMULATOR" \
-                "INCRT={workspace_root}/uts/i386" \
-                "BUS=AT386" \
-                "ARCH=AT386" \
-                tools emulator.rel1
-              cp "emulator.rel1" "{system_root}/sbin/emulator.rel1"
-              ln -sf emulator.rel1 "{system_root}/sbin/emulator"
-              ln -sf ../sbin/emulator "{system_root}/etc/emulator"
-              ln -sf ../sbin/emulator.rel1 "{system_root}/etc/emulator.rel1"
+          - python3
+          - tools/uts_build_fp.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --fp-root
+          - "{fp_stage_root}"
+          - --build-root
+          - "{builddir}/uts/i386/fp/build"
+          - --system-root
+          - "{system_root}"
+          - --cpp
+          - "{cpp}"
+          - --ld
+          - "{ld}"
 
   historical-platform-at386:
     description: Aggregate the historically separate bootstrap and floating-point emulator build families.
