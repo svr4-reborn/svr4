@@ -7,6 +7,10 @@ toolchain:
     - -fcommon
     - -fno-builtin
     - -O2
+    - -m32
+    - -Werror
+    - -DREL="4"
+    - -DVER="2.1"
   cppflags:
     - -P
   ldflags: []
@@ -524,7 +528,8 @@ targets:
           - os-at386
         cwd: os
         output_dir: "{obj_root}/os"
-        continue_on_error: true
+        continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -540,7 +545,7 @@ targets:
           - vm-at386
         cwd: vm
         output_dir: "{obj_root}/vm"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -556,7 +561,7 @@ targets:
           - disp-at386
         cwd: disp
         output_dir: "{obj_root}/disp"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -572,7 +577,7 @@ targets:
           - vx-at386
         cwd: vx
         output_dir: "{obj_root}/vx"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -588,7 +593,7 @@ targets:
           - exec-at386
         cwd: exec
         output_dir: "{obj_root}/exec"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           recursive: true
           extensions:
@@ -605,7 +610,7 @@ targets:
           - io-at386
         cwd: io
         output_dir: "{obj_root}/io/core"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           recursive: true
           extensions:
@@ -627,7 +632,7 @@ targets:
           - io-at386
         cwd: io/ws
         output_dir: "{obj_root}/io/ws"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -643,7 +648,7 @@ targets:
           - io-at386
         cwd: io/kd
         output_dir: "{obj_root}/io/kd"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -659,7 +664,7 @@ targets:
           - io-at386
         cwd: io/kdvm
         output_dir: "{obj_root}/io/kdvm"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -721,7 +726,7 @@ targets:
           - fs-at386
         cwd: fs
         output_dir: "{obj_root}/fs"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           recursive: true
           extensions:
@@ -738,7 +743,7 @@ targets:
           - netmod-at386
         cwd: des
         output_dir: "{obj_root}/des"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -754,7 +759,7 @@ targets:
           - netmod-at386
         cwd: rpc
         output_dir: "{obj_root}/rpc"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -770,7 +775,7 @@ targets:
           - netmod-at386
         cwd: ktli
         output_dir: "{obj_root}/ktli"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -786,7 +791,7 @@ targets:
           - netmod-at386
         cwd: klm
         output_dir: "{obj_root}/klm"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -802,7 +807,7 @@ targets:
           - netinet-at386
         cwd: netinet
         output_dir: "{obj_root}/netinet"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -827,7 +832,7 @@ targets:
           - kdb-at386
         cwd: kdb/kdb
         output_dir: "{obj_root}/kdb/core"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -843,7 +848,7 @@ targets:
           - kdb-at386
         cwd: kdb/gdebugger
         output_dir: "{obj_root}/kdb/gdebugger"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
@@ -859,7 +864,7 @@ targets:
           - kdb-at386
         cwd: kdb/kdb-util
         output_dir: "{obj_root}/kdb/kdb-util"
-        continue_on_error: true
+        continue_on_error: false
         discover:
           extensions:
             - .c
