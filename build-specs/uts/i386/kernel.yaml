@@ -848,6 +848,7 @@ targets:
         cwd: kdb/kdb
         output_dir: "{obj_root}/kdb/core"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -880,6 +881,7 @@ targets:
         cwd: kdb/kdb-util
         output_dir: "{obj_root}/kdb/kdb-util"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
