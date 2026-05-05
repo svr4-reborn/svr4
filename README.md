@@ -10,6 +10,10 @@ The tree is useful as a starting point for a kernel port or modernization projec
 
 The repository also includes a small Python build driver in [build.py](build.py) for the in-progress YAML-based kernel build flow.
 
+The floppy image and filesystem logic now lives behind the reusable local module [tools/floppyfs.py](tools/floppyfs.py). The public import path remains `tools.floppyfs`, and the internal implementation is split under [tools/floppyfslib/](tools/floppyfslib/).
+
+Detailed floppy-image commands and module examples now live in [docs/boot-floppy-tooling.md](docs/boot-floppy-tooling.md).
+
 To emit a VS Code and clangd compatible compilation database while walking the selected target, use:
 
 ```sh
@@ -17,6 +21,25 @@ python3 build.py -t kernel-at386 --dry-run --emit-compile-commands
 ```
 
 That writes `compile_commands.json` at the workspace root by default. You can also pass an explicit path, for example `--emit-compile-commands build/kernel-at386/compile_commands.json`.
+
+Boot floppy image entry points:
+
+- `python3 build.py -t boot-floppy-hybrid-at386`
+- `python3 build.py -t boot-floppy-hybrid-at386-labeled`
+- `python3 build.py -t boot-floppy-validate-replacements-at386-labeled`
+- `python3 tools/boot_floppy_image.py inspect --image "original_diskettes/Base 01 (2.1a).img"`
+
+The detailed command reference, extraction and diff workflows, replacement manifest examples, and direct module import examples are in [docs/boot-floppy-tooling.md](docs/boot-floppy-tooling.md).
+
+To build a hybrid AT386 boot floppy image from a reference diskette placed in `original_diskettes/`, use:
+
+```sh
+python3 build.py -t boot-floppy-hybrid-at386
+```
+
+That target builds the local `fdboot`, detects the reference floppy's boot and filesystem boundary, and writes a hybrid image to `build/boot-media/base01-hybrid.img` plus a JSON inspection report next to it.
+
+The s5 replacement path can grow existing files by allocating new data and indirect blocks from the image's on-disk free list, and it now reclaims blocks again when a replacement shrinks a file.
 
 ## What this repository appears to be
 

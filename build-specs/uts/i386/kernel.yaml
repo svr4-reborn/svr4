@@ -25,6 +25,13 @@ variables:
   legacy_stage_root: "{builddir}/legacy-src"
   boot_stage_root: "{legacy_stage_root}/uts/i386/boot"
   boot_stage_at386_root: "{boot_stage_root}/at386"
+  reference_boot_floppy: "{workspace_root}/original_diskettes/Base 01 (2.1a).img"
+  hybrid_boot_floppy: "{builddir}/boot-media/base01-hybrid.img"
+  hybrid_boot_report: "{builddir}/boot-media/base01-hybrid-layout.json"
+  hybrid_boot_replacement_manifest: "{workspace_root}/build-specs/uts/i386/boot-floppy-replacements.json"
+  hybrid_boot_replacement_set: "label-hybrid"
+  hybrid_boot_labeled_floppy: "{builddir}/boot-media/base01-hybrid-labeled.img"
+  hybrid_boot_labeled_report: "{builddir}/boot-media/base01-hybrid-labeled-layout.json"
   fp_stage_root: "{legacy_stage_root}/uts/i386/fp"
   idcmd_tool_root: "{builddir}/uts/i386/tools/idcmd"
   conf_bin: "{system_root}/etc/conf/bin"
@@ -478,6 +485,67 @@ targets:
           - as
           - --ld
           - "{ld}"
+
+  boot-floppy-hybrid-at386:
+    description: Build a hybrid AT386 boot floppy image by combining the locally built fdboot with the official reference floppy filesystem and kernel payload.
+    depends_on:
+      - boot-at386
+    steps:
+      - kind: mkdir
+        path: "{builddir}/boot-media"
+      - kind: command
+        argv:
+          - python3
+          - tools/boot_floppy_image.py
+          - build-hybrid
+          - --reference-image
+          - "{reference_boot_floppy}"
+          - --bootloader
+          - "{builddir}/uts/i386/boot/build/fdboot"
+          - --output
+          - "{hybrid_boot_floppy}"
+          - --report-json
+          - "{hybrid_boot_report}"
+
+  boot-floppy-hybrid-at386-labeled:
+    description: Build a hybrid AT386 boot floppy image and apply the repo-owned named replacement set from the boot floppy manifest.
+    depends_on:
+      - boot-at386
+    steps:
+      - kind: mkdir
+        path: "{builddir}/boot-media"
+      - kind: command
+        argv:
+          - python3
+          - tools/boot_floppy_image.py
+          - build-hybrid
+          - --reference-image
+          - "{reference_boot_floppy}"
+          - --bootloader
+          - "{builddir}/uts/i386/boot/build/fdboot"
+          - --output
+          - "{hybrid_boot_labeled_floppy}"
+          - --report-json
+          - "{hybrid_boot_labeled_report}"
+          - --replacement-manifest
+          - "{hybrid_boot_replacement_manifest}"
+          - --replacement-set
+          - "{hybrid_boot_replacement_set}"
+
+  boot-floppy-validate-replacements-at386-labeled:
+    description: Validate the repo-owned named boot floppy replacement set against the reference image without writing a hybrid image.
+    steps:
+      - kind: command
+        argv:
+          - python3
+          - tools/boot_floppy_image.py
+          - validate-replacements
+          - --image
+          - "{reference_boot_floppy}"
+          - --replacement-manifest
+          - "{hybrid_boot_replacement_manifest}"
+          - --replacement-set
+          - "{hybrid_boot_replacement_set}"
 
   fp-at386:
     description: Build and stage the historical floating-point emulator family under uts/i386/fp into the synthetic system-root.

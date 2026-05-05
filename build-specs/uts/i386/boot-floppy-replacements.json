@@ -1,0 +1,10 @@
+{
+  "sets": {
+    "label-hybrid": [
+      {
+        "target": "/LABEL",
+        "source": "../../../tools/boot-media/label.hybrid"
+      }
+    ]
+  }
+}
