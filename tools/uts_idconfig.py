@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
-from dataclasses import asdict, dataclass
+import shutil
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
 
@@ -136,7 +137,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--obj-root", required=True)
+    parser.add_argument("--exclude-module", action="append", default=[])
     return parser.parse_args()
+
+
+def _normalize_module_name(name: str) -> str:
+    return name.strip().lower()
 
 
 def _iter_metadata_lines(path: Path) -> list[str]:
@@ -913,6 +919,7 @@ def _build_core_link_objects(obj_root: Path, driver_packages: list[dict[str, obj
 
 def _build_manifest(
     conf_root: Path,
+    output_dir: Path,
     obj_root: Path,
     devices: list[DeviceSpec],
     controllers: list[ControllerSpec],
@@ -995,15 +1002,15 @@ def _build_manifest(
 
     return {
         "conf_root": str(conf_root),
-        "cf_dir": str(conf_root / "cf.d"),
+        "cf_dir": str(output_dir),
         "pack_root": str(conf_root / "pack.d"),
         "obj_root": str(obj_root),
         "generated_files": {
-            "config_h": str(conf_root / "cf.d" / "config.h"),
-            "conf_c": str(conf_root / "cf.d" / "conf.c"),
-            "fsconf_c": str(conf_root / "cf.d" / "fsconf.c"),
-            "vector_c": str(conf_root / "cf.d" / "vector.c"),
-            "direct": str(conf_root / "cf.d" / "direct"),
+            "config_h": str(output_dir / "config.h"),
+            "conf_c": str(output_dir / "conf.c"),
+            "fsconf_c": str(output_dir / "fsconf.c"),
+            "vector_c": str(output_dir / "vector.c"),
+            "direct": str(output_dir / "direct"),
         },
         "devices": device_entries,
         "driver_packages": driver_packages,
@@ -1012,6 +1019,12 @@ def _build_manifest(
         "filesystems": [asdict(filesystem) for filesystem in filesystems],
         "assignments": {name: asdict(assignment) for name, assignment in sorted(assignments.items())},
     }
+
+
+def _stage_static_cf_files(conf_root: Path, output_dir: Path) -> None:
+    source_vuifile = conf_root / "cf.d" / "vuifile"
+    if source_vuifile.exists():
+        shutil.copyfile(source_vuifile, output_dir / "vuifile")
 
 
 def main() -> int:
@@ -1033,12 +1046,28 @@ def main() -> int:
     ]
     assignments = _parse_sassign(conf_root / "cf.d" / "sassign")
 
+    excluded_modules = {_normalize_module_name(name) for name in args.exclude_module}
+    if excluded_modules:
+        controllers = [
+            replace(controller, configured=False)
+            if _normalize_module_name(controller.name) in excluded_modules
+            else controller
+            for controller in controllers
+        ]
+        filesystems = [
+            replace(filesystem, configured=False)
+            if _normalize_module_name(filesystem.name) in excluded_modules
+            else filesystem
+            for filesystem in filesystems
+        ]
+
     _write_config_header(output_dir / "config.h", devices, controllers, tunables)
     _write_conf_c(output_dir / "conf.c", devices, controllers, filesystems, assignments)
     _write_fsconf_c(output_dir / "fsconf.c", filesystems)
     _write_vector_c(output_dir / "vector.c", devices, controllers)
     _write_direct(output_dir / "direct", conf_root, devices, filesystems, controllers)
-    manifest = _build_manifest(conf_root, obj_root, devices, controllers, tunables, filesystems, assignments)
+    _stage_static_cf_files(conf_root, output_dir)
+    manifest = _build_manifest(conf_root, output_dir, obj_root, devices, controllers, tunables, filesystems, assignments)
     Path(args.manifest).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     return 0
 

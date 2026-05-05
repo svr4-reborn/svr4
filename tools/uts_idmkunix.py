@@ -141,6 +141,57 @@ def _prepare_gnu_vuifile(vuifile: Path) -> Path:
     for region_name, lowered_region in regions.items():
         normalized_text = re.sub(rf">\s*{region_name}\b", f"> {lowered_region}", normalized_text)
 
+    if "PHDRS" not in normalized_text:
+        normalized_text = normalized_text.replace(
+            "SECTIONS {",
+            "PHDRS {\n text PT_LOAD FLAGS(5);\n data PT_LOAD FLAGS(7);\n bki PT_NOTE FLAGS(0);\n}\nSECTIONS {",
+            1,
+        )
+
+    normalized_text = re.sub(
+        r"^\s*BKI\s*\(COPY\)\s*:\s*\{\s*\.\s*\+=\s*2;\s*\}\s*=\s*2\s*$",
+        " BKI 0 : { *(BKI) } :bki",
+        normalized_text,
+        count=1,
+        flags=re.M,
+    )
+    normalized_text = normalized_text.replace(
+        " .text : {\n  stext = .;\n  ../pack.d/kernel/start.o(.text)\n",
+        " .text : {\n  stext = .;\n  ../pack.d/kernel/start.o(.text)\n  *(.text .text.*)\n  *(.rodata .rodata.*)\n",
+        1,
+    )
+    normalized_text = normalized_text.replace(
+        " .data ALIGN(0x1000) : {\n  sdata = .;\n  ../pack.d/kernel/locore.o(.data)\n",
+        " .data ALIGN(0x1000) : {\n  sdata = .;\n  ../pack.d/kernel/locore.o(.data)\n  *(.data .data.*)\n",
+        1,
+    )
+    normalized_text = normalized_text.replace(
+        " .bss ALIGN(0x1000) : {\n  sbss = .;\n  ../pack.d/kernel/locore.o(.bss)\n",
+        " .bss ALIGN(0x1000) : {\n  sbss = .;\n  ../pack.d/kernel/locore.o(.bss)\n  *(COMMON)\n  *(.bss .bss.*)\n",
+        1,
+    )
+    normalized_text = re.sub(
+        r"(\n\s*\.text\s*:\s*\{.*?\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)\s*$",
+        r"\1 :text",
+        normalized_text,
+        count=1,
+        flags=re.S | re.M,
+    )
+    normalized_text = re.sub(
+        r"(\n\s*\.data[^\{]*\{.*?\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)\s*$",
+        r"\1 :data",
+        normalized_text,
+        count=1,
+        flags=re.S | re.M,
+    )
+    normalized_text = re.sub(
+        r"(\n\s*\.bss[^\{]*\{.*?\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)\s*$",
+        r"\1 :data",
+        normalized_text,
+        count=1,
+        flags=re.S | re.M,
+    )
+
     if not re.search(r"\betext\s*=", normalized_text):
         normalized_text = re.sub(
             r"(\.text\s*:\s*\{.*?)(\n\s*\}\s*>\s*[a-z_][a-z0-9_]*)",
@@ -164,6 +215,14 @@ def _prepare_gnu_vuifile(vuifile: Path) -> Path:
             normalized_text,
             count=1,
             flags=re.S,
+        )
+
+    if "/DISCARD/" not in normalized_text:
+        normalized_text = re.sub(
+            r"\n\s*}\s*$",
+            "\n /DISCARD/ : { *(.eh_frame) *(.rel.eh_frame) *(.note.gnu.property) *(.comment) }\n }\n",
+            normalized_text,
+            count=1,
         )
 
     gnu_vuifile = vuifile.with_name("vuifile.gnu")

@@ -14,7 +14,7 @@ from tools.floppyfs import detect_layout, load_replacement_set, validate_replace
 
 image = Path("original_diskettes/Base 01 (2.1a).img")
 layout = detect_layout(image)
-replacements = load_replacement_set(Path("build-specs/uts/i386/boot-floppy-replacements.json"), "label-hybrid")
+replacements = load_replacement_set(Path("build-specs/uts/i386/boot-floppy-replacements.json"), "kernel-at386")
 validate_replacements(image, replacements)
 ```
 
@@ -26,16 +26,34 @@ Build the base hybrid floppy image:
 python3 build.py -t boot-floppy-hybrid-at386
 ```
 
+Build the AT386 boot floppy with the locally built kernel and the rest of the reference floppy filesystem:
+
+```sh
+python3 build.py -t boot-floppy-at386
+```
+
 Build the repo-owned named replacement set:
 
 ```sh
 python3 build.py -t boot-floppy-hybrid-at386-labeled
 ```
 
+Build the AT386 boot floppy plus the labeled replacement set:
+
+```sh
+python3 build.py -t boot-floppy-at386-labeled
+```
+
 Validate the named replacement set without writing a new image:
 
 ```sh
 python3 build.py -t boot-floppy-validate-replacements-at386-labeled
+```
+
+Validate the local-kernel boot replacement set without writing a new image:
+
+```sh
+python3 build.py -t boot-floppy-validate-replacements-at386
 ```
 
 ## CLI Commands
@@ -79,7 +97,7 @@ Validate one or more requested replacements against an image without writing cha
 python3 tools/boot_floppy_image.py validate-replacements \
   --image "original_diskettes/Base 01 (2.1a).img" \
   --replacement-manifest build-specs/uts/i386/boot-floppy-replacements.json \
-  --replacement-set label-hybrid
+  --replacement-set kernel-at386
 ```
 
 Build a hybrid image with manifest-backed and inline replacements:
@@ -88,16 +106,17 @@ Build a hybrid image with manifest-backed and inline replacements:
 python3 tools/boot_floppy_image.py build-hybrid \
   --reference-image "original_diskettes/Base 01 (2.1a).img" \
   --bootloader build/uts/i386/boot/build/fdboot \
-  --output build/boot-media/base01-hybrid-with-replacement.img \
+  --output build/boot-media/base01-boot.img \
   --replacement-manifest build-specs/uts/i386/boot-floppy-replacements.json \
-  --replacement-set label-hybrid \
-  --replace-s5-file /yes=build/boot-media/yes.from-hybrid
+  --replacement-set kernel-at386 \
+  --replace-s5-file /LABEL=tools/boot-media/label.hybrid
 ```
 
 ## Current Behavior
 
 - `build-hybrid` validates requested replacements before writing the output image.
 - s5 replacement can grow existing files by allocating data and indirect blocks from the image free list.
+- `kernel-at386` replaces `/unix` with the locally built kernel at `build/uts/i386/conf/cf.d/unix` while preserving the rest of the reference floppy filesystem.
 
 ## Debugging A Hybrid Boot Floppy
 

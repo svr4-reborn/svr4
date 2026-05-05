@@ -26,6 +26,9 @@ Boot floppy image entry points:
 
 - `python3 build.py -t boot-floppy-hybrid-at386`
 - `python3 build.py -t boot-floppy-hybrid-at386-labeled`
+- `python3 build.py -t boot-floppy-at386`
+- `python3 build.py -t boot-floppy-at386-labeled`
+- `python3 build.py -t boot-floppy-validate-replacements-at386`
 - `python3 build.py -t boot-floppy-validate-replacements-at386-labeled`
 - `python3 tools/boot_floppy_image.py inspect --image "original_diskettes/Base 01 (2.1a).img"`
 
@@ -38,6 +41,14 @@ python3 build.py -t boot-floppy-hybrid-at386
 ```
 
 That target builds the local `fdboot`, detects the reference floppy's boot and filesystem boundary, and writes a hybrid image to `build/boot-media/base01-hybrid.img` plus a JSON inspection report next to it.
+
+To build a bootable AT386 floppy that uses the locally built `fdboot` and `unix` kernel while reusing the rest of the original diskette filesystem as the rootfs, use:
+
+```sh
+python3 build.py -t boot-floppy-at386
+```
+
+That target also starts from the reference image, but it replaces `/unix` with `build/uts/i386/conf/cf.d/unix` before writing `build/boot-media/base01-boot.img`.
 
 The s5 replacement path can grow existing files by allocating new data and indirect blocks from the image's on-disk free list, and it now reclaims blocks again when a replacement shrinks a file.
 
