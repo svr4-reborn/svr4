@@ -168,7 +168,6 @@ def build_hybrid_image(reference_image: Path, bootloader_image: Path, output_ima
     if replacements:
         validate_replacements(reference_image, replacements, label='Preflight')
     hybrid = bytearray(reference_image.read_bytes())
-    hybrid[:layout.boot_region_size] = b'\0' * layout.boot_region_size
     hybrid[:len(bootloader)] = bootloader
     output_image.parent.mkdir(parents=True, exist_ok=True)
     output_image.write_bytes(hybrid)

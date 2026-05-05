@@ -38,8 +38,23 @@ BOOTLIB_SOURCES = [
     'bfsfilesys.c',
 ]
 
-CPP_DEFINES = ['-DAT386', '-DWEITEK', '-DWEITEK_EMULATOR']
-COMMON_CFLAGS = ['-m32', '-std=gnu89', '-fcommon', '-fno-builtin', '-O']
+CPP_DEFINES = ['-DAT386', '-DDEBUG', '-DWEITEK', '-DWEITEK_EMULATOR']
+COMMON_CFLAGS = [
+    '-m32',
+    '-std=gnu89',
+    '-fcommon',
+    '-fno-builtin',
+    '-fno-stack-protector',
+    '-fomit-frame-pointer',
+    '-fno-unwind-tables',
+    '-fno-asynchronous-unwind-tables',
+    '-fno-pic',
+    '-falign-functions=1',
+    '-falign-jumps=1',
+    '-falign-labels=1',
+    '-falign-loops=1',
+    '-Os',
+]
 
 
 def parse_args() -> argparse.Namespace:
@@ -223,6 +238,10 @@ def main() -> int:
     hdboot_path = build_root / 'hdboot'
     link_boot_image(workspace_root, boot_at386_root / 'mapfile', fdboot_path, fd_boot + fd_bootlib)
     link_boot_image(workspace_root, boot_at386_root / 'mapfile', hdboot_path, hd_boot + hd_bootlib)
+
+    # Preserve linked, unstripped images for source-level boot debugging.
+    shutil.copyfile(fdboot_path, build_root / 'fdboot.debug.elf')
+    shutil.copyfile(hdboot_path, build_root / 'hdboot.debug.elf')
 
     run([args.strip, str(fdboot_path)])
     run([args.strip, str(hdboot_path)])
