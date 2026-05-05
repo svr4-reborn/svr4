@@ -71,7 +71,7 @@
 #define	killpg(a,b)	kill(-(a),(b))
 #define rindex strrchr
 #define index strchr
-#endif SYSV
+#endif /* SYSV */
 
 #ifndef NCARGS
 #define NCARGS	5120
@@ -165,7 +165,7 @@ doit(f, fromp)
 		setsid();
 #else
 		ioctl(t, TIOCNOTTY, (char *)0);
-#endif SYSV
+#endif /* SYSV */
 		(void) close(t);
 	  }
 	}

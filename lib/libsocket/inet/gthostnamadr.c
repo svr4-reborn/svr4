@@ -46,7 +46,7 @@
 #ifdef SYSV
 #define bcmp(s1, s2, len)	memcmp(s1, s2, len)
 #define bcopy(s1, s2, len)	memcpy(s2, s1, len)
-#endif SYSV
+#endif /* SYSV */
 
 #define	MAXALIASES	35
 

@@ -277,7 +277,7 @@ catcher()
 	if (npackets == 0 || ntransmitted < npackets) {
 #ifdef SYSV
 		signal(SIGALRM, catcher);
-#endif SYSV
+#endif /* SYSV */
 		alarm(1);
 	} else {
 		if (nreceived) {
@@ -750,7 +750,7 @@ get_myaddress(addr)
 
 #ifdef SYSV
 #include <sys/stropts.h>
-#endif SYSV
+#endif /* SYSV */
 
 ifioctl(s, cmd, arg)
         int s;
@@ -777,6 +777,6 @@ ifioctl(s, cmd, arg)
         return(ret);
 #else
         return (ioctl(s, cmd, arg);
-#endif SYSV
+#endif /* SYSV */
 }
 

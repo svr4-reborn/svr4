@@ -49,7 +49,7 @@
 #ifdef SYSV
 #include <sys/stream.h>
 #include <sys/stropts.h>
-#endif SYSV
+#endif /* SYSV */
 
 #include <netinet/in.h>
 
@@ -133,7 +133,7 @@ struct termio {
 	unsigned char	c_cc[NCC];	/* control chars */
 };
 
-#endif SYSV
+#endif /* SYSV */
 
 # ifndef TIOCPKT_WINDOW
 # define TIOCPKT_WINDOW 0x80
@@ -146,7 +146,7 @@ struct termio {
 						   processed */
 #define         TIOCPKT_NOSTOP          0x10    /* no more ^S, ^Q */
 #define         TIOCPKT_DOSTOP          0x20    /* now do ^S, ^Q */
-#endif SYSV
+#endif /* SYSV */
 
 
 int	check_all = 0;
@@ -201,7 +201,7 @@ extern	char	*inet_ntoa();
 int	stopmode = TIOCPKT_DOSTOP;
 char	stopc = CTRL ('s');
 char	startc = CTRL('q');
-#endif SYSV
+#endif /* SYSV */
 
 struct winsize win = { 0, 0, 0, 0 };
 pid_t pid;
@@ -218,7 +218,7 @@ doit(f, fromp)
 #ifdef SYSV
 	extern char *ptsname();
 	struct termios tp;
-#endif SYSV
+#endif /* SYSV */
 
 	alarm(60);
 	read(f, &c, 1);
@@ -357,7 +357,7 @@ gotpty:
 	   */
 	  ioctl(t, TIOCLSET, &zero);
 	}
-#endif SYSV
+#endif /* SYSV */
 	/*
 	 * System V ptys allow the TIOC{SG}WINSZ ioctl to be
 	 * issued on the master side of the pty.  Luckily, that's
@@ -490,7 +490,7 @@ protocol(f, p)
 #else
 		ebits = (1<<p);
 		if (select(16, &ibits, &obits, &ebits, 0) < 0) {
-#endif SYSV
+#endif /* SYSV */
 			if (errno == EINTR)
 				continue;
 			fatalperror(f, "select", errno);
@@ -513,7 +513,7 @@ protocol(f, p)
 				}
 			}
 		}
-#endif SYSV
+#endif /* SYSV */
 		if (ibits & (1<<f)) {
 			fcc = read(f, fibuf, sizeof (fibuf));
 			if (fcc < 0 && errno == EWOULDBLOCK)
@@ -560,7 +560,7 @@ protocol(f, p)
 			pcc = pcktread(p, pibuf, sizeof(pibuf), f);
 #else
 			pcc = read(p, pibuf, sizeof (pibuf));
-#endif SYSV
+#endif /* SYSV */
 			pbp = pibuf;
 			if (pcc < 0 && errno == EWOULDBLOCK)
 				pcc = 0;
@@ -587,7 +587,7 @@ protocol(f, p)
 				}
 				pcc = 0;
 			}
-#endif SYSV
+#endif /* SYSV */
 		}
 		if ((obits & (1<<f)) && pcc > 0) {
 			wsize = pcc;
@@ -820,7 +820,7 @@ pcktread(pty, buf, size, soc)
 	}
 	/*NOTREACHED*/
 }
-#endif SYSV
+#endif /* SYSV */
 	
 
 

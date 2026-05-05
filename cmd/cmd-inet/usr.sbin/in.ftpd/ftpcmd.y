@@ -271,7 +271,7 @@ cmd:		USER SP username CRLF
 				retrieve("/bin/ls -l %s", (char *) $4);
 #else
 				retrieve("/bin/ls -lg %s", (char *) $4);
-#endif SYSV
+#endif /* SYSV */
 			if ($4 != NULL)
 				free((char *) $4);
 		}

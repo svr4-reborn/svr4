@@ -40,14 +40,14 @@
 #include <sys/ioctl.h>
 #ifndef SYSV
 #include <sys/mbuf.h>
-#endif SYSV
+#endif /* SYSV */
 #include <signal.h>
 #include <setjmp.h>
 
 #ifdef SYSV
 #include <sys/stream.h>
 #include <sys/stropts.h>
-#endif SYSV
+#endif /* SYSV */
 #include <net/route.h>
 #include <netinet/in.h>
 #ifdef XNS
@@ -96,7 +96,7 @@ main(argc, argv)
 		perror("route: socket");
 		exit(1);
 	}
-#endif SYSV
+#endif /* SYSV */
 	argc--, argv++;
 	for (; argc >  0 && argv[0][0] == '-'; argc--, argv++) {
 		for (argv[0]++; *argv[0]; argv[0]++)
@@ -286,7 +286,7 @@ again:
 	}
 	close(kmem);
 	free(routehash);
-#endif SYSV
+#endif /* SYSV */
 }
 
 static jmp_buf NameTimeout;
@@ -702,7 +702,7 @@ rtioctl(s, cmd, arg)
 	return (ioctl(s, I_STR, (char *) &ioc));
 #else
 	return (ioctl(s, cmd, arg);
-#endif SYSV
+#endif /* SYSV */
 }
 
 

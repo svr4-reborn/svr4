@@ -55,7 +55,7 @@
 #else
 #define	rindex	strrchr
 #define	index	strchr
-#endif SYSV
+#endif /* SYSV */
 
 int	rem;
 char	*colon(), *index(), *rindex(), *malloc(), *strcpy();

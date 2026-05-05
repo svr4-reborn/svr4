@@ -276,7 +276,7 @@ command(fmt, va_alist)
 		vfprintf(stdout, fmt, ap);
 #else
 		_doprnt(fmt, ap, stdout);
-#endif SYSV
+#endif /* SYSV */
 		printf("\n");
 		(void) fflush(stdout);
 	}
@@ -290,7 +290,7 @@ command(fmt, va_alist)
 	vfprintf(cout, fmt, ap);
 #else
 	_doprnt(fmt, ap, cout);
-#endif SYSV
+#endif /* SYSV */
 	fprintf(cout, "\r\n");
 	(void) fflush(cout);
 	va_end(ap);

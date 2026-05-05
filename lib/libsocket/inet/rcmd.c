@@ -55,7 +55,7 @@
 char	*strchr();
 #else
 char	*index();
-#endif SYSV
+#endif /* SYSV */
 
 extern	errno;
 char	*strcpy();
@@ -79,7 +79,7 @@ rcmd(ahost, rport, locuser, remuser, cmd, fd2p)
 	sigset_t newmask;
 #else
 	int oldmask;
-#endif SYSV
+#endif /* SYSV */
 
 
 	pid = getpid();
@@ -96,7 +96,7 @@ rcmd(ahost, rport, locuser, remuser, cmd, fd2p)
 	(void) sigprocmask(SIG_BLOCK, &newmask, &oldmask);
 #else
 	oldmask = sigblock(sigmask(SIGURG));
-#endif SYSV
+#endif /* SYSV */
 	for (;;) {
 		s = rresvport(&lport);
 		if (s < 0) {
@@ -110,7 +110,7 @@ rcmd(ahost, rport, locuser, remuser, cmd, fd2p)
 					   (sigset_t *) 0);
 #else
 			sigsetmask(oldmask);
-#endif SYSV
+#endif /* SYSV */
 			return (-1);
 		}
 		fcntl(s, F_SETOWN, pid);
@@ -149,7 +149,7 @@ rcmd(ahost, rport, locuser, remuser, cmd, fd2p)
 		(void) sigprocmask(SIG_SETMASK, &oldmask, (sigset_t *) 0);
 #else
 		sigsetmask(oldmask);
-#endif SYSV
+#endif /* SYSV */
 		return (-1);
 	}
 	lport--;
@@ -215,7 +215,7 @@ rcmd(ahost, rport, locuser, remuser, cmd, fd2p)
 	(void) sigprocmask(SIG_SETMASK, &oldmask, (sigset_t *) 0);
 #else
 	sigsetmask(oldmask);
-#endif SYSV
+#endif /* SYSV */
 	return (s);
 bad2:
 	if (lport)
@@ -227,7 +227,7 @@ bad:
 	(void) sigprocmask(SIG_SETMASK, &oldmask, (sigset_t *) 0);
 #else
 	sigsetmask(oldmask);
-#endif SYSV
+#endif /* SYSV */
 	return (-1);
 }
 

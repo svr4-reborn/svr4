@@ -59,7 +59,7 @@ char	*malloc();
 char	*sprintf();
 #else
 #define	bcopy(a,b,c)	memcpy((b), (a), (c))
-#endif SYSV
+#endif /* SYSV */
 int	aflg;
 int 	rflg = 1;
 

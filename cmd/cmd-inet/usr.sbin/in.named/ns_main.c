@@ -40,7 +40,7 @@
 #include <sys/param.h>
 #if defined(SYSV)
 #include <fcntl.h>
-#endif SYSV
+#endif /* SYSV */
 #include <sys/file.h>
 #include <sys/time.h>
 #if !defined(SYSV)
@@ -286,7 +286,7 @@ main(argc, argv, envp)
 	(void) signal(SIGCLD, reapchild);
 #else
 	(void) signal(SIGCHLD, reapchild);
-#endif SYSV
+#endif /* SYSV */
 	(void) signal(SIGPIPE, SIG_IGN);
 	(void) signal(SIGSYS, sigprof);
 	(void) signal(SIGINT, setdumpflg);
@@ -887,7 +887,7 @@ onhup()
 {
 #if defined(SYSV)
 	(void)signal(SIGHUP, onhup);
-#endif SYSV
+#endif /* SYSV */
 	needreload = 1;
 }
 
@@ -901,7 +901,7 @@ maint_alarm()
 {
 #if defined(SYSV)
 	(void)signal(SIGALRM, maint_alarm);
-#endif SYSV
+#endif /* SYSV */
 	needmaint = 1;
 }
 
@@ -926,7 +926,7 @@ int setdumpflg()
 {
 #if defined(SYSV)
 	(void)signal(SIGINT, setdumpflg);
-#endif SYSV
+#endif /* SYSV */
         needToDoadump = 1;
 }
 
@@ -951,7 +951,7 @@ reapchild()
 
 	while ((wait3(&status, WNOHANG, (struct rusage *)NULL)) > 0)
 		;
-#endif SYSV
+#endif /* SYSV */
 }
 
 /*
@@ -1001,7 +1001,7 @@ setIncrDbgFlg()
 {
 #if defined(SYSV)
 	(void)signal(SIGUSR1, setIncrDbgFlg);
-#endif SYSV
+#endif /* SYSV */
 #ifdef DEBUG
 	if (debug == 0) {
 		debug++;
@@ -1022,7 +1022,7 @@ setNoDbgFlg()
 {
 #if defined(SYSV)
 	(void)signal(SIGUSR2, setNoDbgFlg);
-#endif SYSV
+#endif /* SYSV */
 	setdebug(0);
 }
 
@@ -1033,7 +1033,7 @@ setstatsflg()
 {
 #if defined(SYSV)
 	(void)signal(SIGIOT, setstatsflg);
-#endif SYSV
+#endif /* SYSV */
 	needStatsDump = 1;
 }
 
@@ -1041,7 +1041,7 @@ int setchkptflg()
 {
 #if defined(SYSV)
 	(void)signal(SIGQUIT, setchkptflg);
-#endif SYSV
+#endif /* SYSV */
 	needToChkpt = 1;
 }
 
@@ -1056,7 +1056,7 @@ sigprof()
 {
 #if defined(SYSV)
 	(void)signal(SIGSYS, sigprof);
-#endif SYSV
+#endif /* SYSV */
 #ifdef DEBUG
 	if (debug)
 		fprintf(ddt,"sigprof()\n");

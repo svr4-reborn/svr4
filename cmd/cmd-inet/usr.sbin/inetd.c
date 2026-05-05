@@ -173,7 +173,7 @@ char	*strchr();
 void	sigterm();
 
 int	standalone = 0;		/* run without SAC */
-#endif SYSV
+#endif /* SYSV */
 
 int	debug = 0;
 FILE	*debugfp;
@@ -198,7 +198,7 @@ int	calltrace = 0;		/* trace all connections */
 #define	OTHERDESCRIPTORS	11
 #else
 #define	OTHERDESCRIPTORS	8
-#endif SYSV
+#endif /* SYSV */
 
 /*
  * Additional information carried in various fields:
@@ -291,7 +291,7 @@ struct	pmmsg	Pmmsg;
 char	Tag[PMTAGSIZE];
 char	State = PM_STARTING;
 int	Sfd, Pfd;
-#endif SYSV
+#endif /* SYSV */
 
 main(argc, argv, envp)
 	int argc;
@@ -460,7 +460,7 @@ main(argc, argv, envp)
 	sv.sv_handler = reapchild;
 	sigvec(SIGCHLD, &sv, (struct sigvec *)0);
 
-#endif SYSV
+#endif /* SYSV */
 
 	for (;;) {
 	    int ctrl, n;
@@ -611,7 +611,7 @@ main(argc, argv, envp)
 					ioctl(tt, TIOCNOTTY, 0);
 					(void) close(tt);
 				}
-#endif SYSV
+#endif /* SYSV */
 
 			sprintf(addrbuf, "%x.%d", ntohl(rem_addr.sin_addr.s_addr),
 					ntohs(rem_addr.sin_port));
@@ -687,7 +687,7 @@ reapchild()
 	register struct servtab *sep;
 #ifdef SYSV
 #define sys_siglist _sys_siglist
-#endif SYSV
+#endif /* SYSV */
 	extern char *sys_siglist[];
 
 #ifdef SYSV
@@ -901,7 +901,7 @@ config()
 				termserv(sep);
 		}
 	}
-#endif SYSV
+#endif /* SYSV */
 	(void) sigsetmask(omask);
 }
 
@@ -1611,7 +1611,7 @@ machtime()
 		syslog(LOG_INFO, "Unable to get time of day\n");
 #else
 		fprintf(debugfp, "Unable to get time of day\n");
-#endif SYSV
+#endif /* SYSV */
 		return (0L);
 	}
 	return (htonl((long)tv.tv_sec + 2208988800));
@@ -1909,5 +1909,5 @@ sigterm()
 	syslog(LOG_INFO, "inetd terminating");
 	exit(0);
 }
-#endif SYSV
+#endif /* SYSV */
 

@@ -46,7 +46,7 @@
 #include <sys/time.h>
 #ifdef SYSV
 #include <sys/stropts.h>
-#endif SYSV
+#endif /* SYSV */
 
 #include <netinet/in.h>
 
@@ -63,7 +63,7 @@
 #ifdef SYSV
 #include <sac.h>	/* for SC_WILDC */
 #include <utmpx.h>
-#endif SYSV
+#endif /* SYSV */
 #include <sys/ioctl.h>
 
 #ifdef SYSV
@@ -107,7 +107,7 @@ char BANNER1[] = "\r\n\r\nUNIX(r) System V Release 4.0 (",
 #else
 char BANNER1[] = "\r\n\r\n4.3 BSD UNIX(r) (",
     BANNER2[] = ")\r\n\r\0\r\n\r\0";
-#endif SYSV
+#endif /* SYSV */
 
 		/* buffer for sub-options */
 char	subbuffer[100], *subpointer= subbuffer, *subend= subbuffer;
@@ -343,7 +343,7 @@ gotpty:
 	t = open(line, O_RDWR);
 	if (t < 0)
 		fatalperror(f, line, errno);
-#endif SYSV
+#endif /* SYSV */
 
 	net = f;
 	master = p;
@@ -351,7 +351,7 @@ gotpty:
 	pty = t;
 #else
 	pty = p;
-#endif SYSV
+#endif /* SYSV */
 
 	if (ioctl(t, TIOCGETP, &b) == -1)
 		syslog(LOG_INFO, "ioctl TIOCGETP pty t: %m\n");
@@ -1462,4 +1462,4 @@ rmut()
 	chmod(line, 0666);
 	chown(line, 0, 0);
 }
-#endif SYSV
+#endif /* SYSV */

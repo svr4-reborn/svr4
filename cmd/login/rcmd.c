@@ -56,7 +56,7 @@ publication.
 char	*strchr();
 #else
 char	*index();
-#endif SYSV
+#endif /* SYSV */
 
 extern	errno;
 char	*strcpy();

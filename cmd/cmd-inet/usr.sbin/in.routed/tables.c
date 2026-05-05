@@ -65,7 +65,7 @@ typedef struct vq {
 					(caddr_t)((vq_t *)e)->back; \
 			((vq_t *)e)->fwd = (caddr_t) 0; \
 			((vq_t *)e)->back = (caddr_t)0;
-#endif SYSV
+#endif /* SYSV */
 
 int	install = !DEBUG;		/* if 1 call kernel */
 

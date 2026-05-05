@@ -48,7 +48,7 @@
 #include <sys/ttold.h>
 #else
 #include <sys/ioctl.h>
-#endif SYSV
+#endif /* SYSV */
 
 #include <netinet/in.h>
 
@@ -182,7 +182,7 @@ main(argc, argv)
 			ttcompat = 1;
 		}
 	}
-#endif SYSV
+#endif /* SYSV */
 
 	host = rindex(argv[0], '/');
 	if (host)

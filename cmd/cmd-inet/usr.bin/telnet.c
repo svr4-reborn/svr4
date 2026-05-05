@@ -44,7 +44,7 @@
 #ifdef SYSV
 #include <sys/stropts.h>
 #include <sys/filio.h>
-#endif SYSV
+#endif /* SYSV */
 #include <netinet/in.h>
 
 #define	TELOPTS
@@ -560,7 +560,7 @@ intr()
 {
 #ifdef SYSV
     signal(SIGINT, (void (*)())intr);
-#endif SYSV
+#endif /* SYSV */
     if (localchars) {
 	intp();
 	return;
@@ -574,7 +574,7 @@ intr2()
 {
 #ifdef SYSV
     signal(SIGQUIT, (void (*)())intr2);
-#endif SYSV
+#endif /* SYSV */
     if (localchars) {
 	sendbrk();
 	return;
@@ -587,7 +587,7 @@ doescape()
     command(0);
 #ifdef SYSV
     signal(SIGTSTP, (void (*)())doescape);
-#endif SYSV
+#endif /* SYSV */
 }
 
 /*
@@ -2457,7 +2457,7 @@ main(argc, argv)
 		}
 		ttcompat = 1;
 	}
-#endif SYSV
+#endif /* SYSV */
 		
 	NetTrace = stdout;
 	if (ioctl(0, TIOCGETP, (char *)&ottyb) == -1)

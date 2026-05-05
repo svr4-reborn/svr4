@@ -29,6 +29,10 @@ def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> Non
     subprocess.run(command, cwd=cwd, env=env, check=True)
 
 
+def compile_generated_assembly(cc: str, cflags: list[str], source: Path, output: Path, cwd: Path) -> None:
+    run([cc, *cflags, '-c', str(source), '-o', str(output)], cwd=cwd)
+
+
 def sanitize_symvals_assembly(work_ml_root: Path) -> None:
     source = work_ml_root / 'symvals.s'
     lines = source.read_text(encoding='utf-8').splitlines()
@@ -142,18 +146,18 @@ def main() -> int:
     run([args.cc, *args.cflag, '-S', 'tables2.c', '-o', 'tables2.s'], cwd=work_ml_root)
     tables2_temp = rewrite_tables2_assembly(work_ml_root)
     tables2_obj = obj_root / 'tables2.o'
-    run([args.cc, '-c', str(tables2_temp), '-o', str(tables2_obj)], cwd=work_ml_root)
+    compile_generated_assembly(args.cc, args.cflag, tables2_temp, tables2_obj, work_ml_root)
 
     syms_source = work_ml_root / 'syms-preprocessed.s'
     run([args.cc, '-x', 'assembler-with-cpp', '-E', *args.cpp_flag, 'syms.s', '-o', str(syms_source)], cwd=work_ml_root)
     syms_obj = obj_root / 'syms.o'
-    run([args.cc, '-c', str(syms_source), '-o', str(syms_obj)], cwd=work_ml_root)
+    compile_generated_assembly(args.cc, args.cflag, syms_source, syms_obj, work_ml_root)
 
     locore_temp = write_locore_source(work_ml_root)
     locore_source = work_ml_root / 'locore.s'
     run([args.cc, '-x', 'assembler-with-cpp', '-E', *args.cpp_flag, str(locore_temp), '-o', str(locore_source)], cwd=work_ml_root)
     locore_asm_obj = work_ml_root / 'locore-asm.o'
-    run([args.cc, '-c', str(locore_source), '-o', str(locore_asm_obj)], cwd=work_ml_root)
+    compile_generated_assembly(args.cc, args.cflag, locore_source, locore_asm_obj, work_ml_root)
 
     locore_obj = obj_root / 'locore.o'
     run(
@@ -175,7 +179,7 @@ def main() -> int:
     start_source = work_ml_root / 'start.s'
     run([args.cc, '-x', 'assembler-with-cpp', '-E', *args.cpp_flag, str(start_temp), '-o', str(start_source)], cwd=work_ml_root)
     start_asm_obj = work_ml_root / 'start-asm.o'
-    run([args.cc, '-c', str(start_source), '-o', str(start_asm_obj)], cwd=work_ml_root)
+    compile_generated_assembly(args.cc, args.cflag, start_source, start_asm_obj, work_ml_root)
 
     start_obj = obj_root / 'start.o'
     run(

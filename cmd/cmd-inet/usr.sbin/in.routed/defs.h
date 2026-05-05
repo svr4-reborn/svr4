@@ -43,7 +43,7 @@
 #include <sys/socket.h>
 #ifdef SYSV
 #include <sys/stream.h>
-#endif SYSV
+#endif /* SYSV */
 
 #include <net/route.h>
 #include <netinet/in.h>

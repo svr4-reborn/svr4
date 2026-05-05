@@ -40,7 +40,7 @@
 #if defined(SYSV)
 #include <unistd.h>
 #include <utime.h>
-#endif SYSV
+#endif /* SYSV */
 #include <netinet/in.h>
 #include <stdio.h>
 #include <syslog.h>

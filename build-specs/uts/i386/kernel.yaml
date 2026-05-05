@@ -11,6 +11,7 @@ toolchain:
     - -Werror
     - -DREL="4"
     - -DVER="2.1"
+    - -DSYSV
   cppflags:
     - -P
   ldflags: []
@@ -706,6 +707,7 @@ targets:
           - --ld
           - "{ld}"
           - --cflag=-std=gnu89
+          - --cflag=-m32
           - --cflag=-fcommon
           - --cflag=-fno-builtin
           - --cflag=-O2
@@ -734,6 +736,7 @@ targets:
         cwd: fs
         output_dir: "{obj_root}/fs"
         continue_on_error: false
+        parallel: true
         discover:
           recursive: true
           extensions:
@@ -751,6 +754,7 @@ targets:
         cwd: des
         output_dir: "{obj_root}/des"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -767,6 +771,7 @@ targets:
         cwd: rpc
         output_dir: "{obj_root}/rpc"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -783,6 +788,7 @@ targets:
         cwd: ktli
         output_dir: "{obj_root}/ktli"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -799,6 +805,7 @@ targets:
         cwd: klm
         output_dir: "{obj_root}/klm"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c
@@ -815,6 +822,7 @@ targets:
         cwd: netinet
         output_dir: "{obj_root}/netinet"
         continue_on_error: false
+        parallel: true
         discover:
           extensions:
             - .c

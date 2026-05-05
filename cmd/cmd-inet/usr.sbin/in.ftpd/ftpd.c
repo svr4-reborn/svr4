@@ -65,7 +65,7 @@
 #include <fcntl.h>
 #ifdef SYSV
 #include <shadow.h>
-#endif SYSV
+#endif /* SYSV */
 
 #ifdef SYSV
 char	*strrchr();
@@ -271,7 +271,7 @@ sgetpwnam(name)
 #ifdef SYSV
 	struct spwd *sp;
 	int oldeuid;
-#endif SYSV
+#endif /* SYSV */
 	char *sgetsave();
 
 	if ((p = getpwnam(name)) == NULL) {
@@ -288,7 +288,7 @@ sgetpwnam(name)
 	}
 	if (oldeuid && oldeuid != -1)
 		seteuid (oldeuid);
-#endif SYSV
+#endif /* SYSV */
 	if (save.pw_name) {
 		free(save.pw_name);
 		free(save.pw_passwd);
@@ -303,7 +303,7 @@ sgetpwnam(name)
 	save.pw_passwd = sgetsave(sp->sp_pwdp);
 #else
 	save.pw_passwd = sgetsave(p->pw_passwd);
-#endif SYSV
+#endif /* SYSV */
 	save.pw_comment = sgetsave(p->pw_comment);
 	save.pw_gecos = sgetsave(p->pw_gecos);
 	save.pw_dir = sgetsave(p->pw_dir);
@@ -745,7 +745,7 @@ reply(n, s, va_alist)
 	vfprintf(stdout, s, ap);
 #else
 	_doprnt(s, ap, stdout);
-#endif SYSV
+#endif /* SYSV */
 	printf("\r\n");
 	(void) fflush(stdout);
 	if (debug) {
@@ -769,7 +769,7 @@ lreply(n, s, va_alist)
 	vfprintf(stdout, s, ap);
 #else
 	_doprnt(s, ap, stdout);
-#endif SYSV
+#endif /* SYSV */
 	printf("\r\n");
 	(void) fflush(stdout);
 	if (debug) {

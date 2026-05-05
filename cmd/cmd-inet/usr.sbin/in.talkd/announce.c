@@ -138,7 +138,7 @@ char *remote_machine;
     (void) setsid();
 #else
     ioctl(fileno(tf), TIOCNOTTY, (struct sgttyb *) 0);
-#endif SYSV
+#endif /* SYSV */
 
     if (fstat(fileno(tf), &stbuf) < 0) {
 	return(PERMISSION_DENIED);

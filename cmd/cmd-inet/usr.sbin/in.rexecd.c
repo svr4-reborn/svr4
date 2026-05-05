@@ -71,7 +71,7 @@ struct	passwd *getpwnam();
 #define killpg(a,b)	kill(-(a),(b))
 #else
 char  *sprintf();
-#endif SYSV
+#endif /* SYSV */
 
 char	*crypt(), *rindex(), *strncat();
 
@@ -166,7 +166,7 @@ doit(f, fromp)
 		setsid();
 #else
 		ioctl(t, TIOCNOTTY, (char *)0);
-#endif SYSV
+#endif /* SYSV */
 		(void) close(t);
 	  }
 	}

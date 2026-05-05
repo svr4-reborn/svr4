@@ -41,7 +41,7 @@
 
 #ifndef SYSV
 extern	char *sprintf();
-#endif SYSV
+#endif /* SYSV */
 
 /*  TWG name of function */
 res_mkquery(op, dname, class, type, data, datalen, newrr, buf, buflen)

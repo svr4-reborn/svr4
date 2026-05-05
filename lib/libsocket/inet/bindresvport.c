@@ -39,7 +39,7 @@
 
 #ifdef SYSV
 #define bzero(s, len)	memset(s, 0, len)
-#endif SYSV
+#endif /* SYSV */
 
 
 /*

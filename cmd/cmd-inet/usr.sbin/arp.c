@@ -55,7 +55,7 @@
 #ifdef SYSV
 #define bzero(s,n)	memset((s), 0, (n))
 #define bcopy(f,t,l)	memcpy((t), (f), (l))
-#endif SYSV
+#endif /* SYSV */
 
 extern int errno;
 
@@ -67,7 +67,7 @@ main(argc, argv)
 		char *kernel = "/unix";
 #else
 		char *kernel = "/vmunix";
-#endif SYSV
+#endif /* SYSV */
 		char *mem = "/dev/kmem";
 
 		if (argc >= 3)
@@ -349,7 +349,7 @@ dump(kernel, mem)
 		fprintf(stderr, "arp: %s: bad namelist\n", kernel);
 		exit(1);
 	}
-#endif SYSV
+#endif /* SYSV */
 	mf = open(mem, 0);
 	if(mf < 0) {
 		fprintf(stderr, "arp: cannot open %s\n", mem);
@@ -431,7 +431,7 @@ usage()
 	printf("       arp -a [/unix] [/dev/kmem]\n");
 #else
 	printf("       arp -a [/vmunix] [/dev/kmem]\n");
-#endif SYSV
+#endif /* SYSV */
 	printf("       arp -d hostname\n");
 	printf("       arp -s hostname ether_addr [temp] [pub] [trail]\n");
 	printf("       arp -f filename\n");

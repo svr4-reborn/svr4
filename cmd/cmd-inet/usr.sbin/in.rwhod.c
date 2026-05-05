@@ -42,7 +42,7 @@
 #include <sys/file.h>
 #ifdef SYSV
 #include <sys/stropts.h>
-#endif SYSV
+#endif /* SYSV */
 
 #include <net/if.h>
 #include <netinet/in.h>
@@ -66,7 +66,7 @@ char *kernname = "/unix";
 #define	bcopy(a,b,c)	memcpy((b),(a),(c))
 #else
 char *kernname = "/vmunix";
-#endif SYSV
+#endif /* SYSV */
 
 /*
  * Alarm interval. Don't forget to change the down time check in ruptime
@@ -122,7 +122,7 @@ int	onalrm();
 char	*strcpy(), *malloc();
 #ifndef SYSV
 char	*sprintf();
-#endif SYSV
+#endif /* SYSV */
 long	lseek();
 int	getkmem();
 struct	in_addr inet_makeaddr();
@@ -162,7 +162,7 @@ main()
 		(void) setsid();
 #else
 		ioctl(s, TIOCNOTTY, 0);
-#endif SYSV
+#endif /* SYSV */
 		(void) close(s);
 	  }
 	}
@@ -405,7 +405,7 @@ onalrm()
 done:
 #ifdef SYSV
 	signal(SIGALRM, (void (*)())onalrm);
-#endif SYSV
+#endif /* SYSV */
 	(void) alarm(AL_INTERVAL);
 }
 
@@ -416,7 +416,7 @@ getkmem()
 	struct stat sb;
 #ifdef SYSV
 	struct utmp *utmp, utmp_id;
-#endif SYSV
+#endif /* SYSV */
 
 
 	if (stat(kernname, &sb) < 0) {
@@ -449,7 +449,7 @@ loop:
 	if ((utmp = getutid(&utmp_id)) != NULL)
 		mywd.wd_boottime = utmp->ut_time;
 	endutent();
-#endif SYSV
+#endif /* SYSV */
 	mywd.wd_boottime = htonl(mywd.wd_boottime);
 }
 
@@ -633,5 +633,5 @@ sockioctl(s, cmd, arg, len)
 	return(ret);
 #else
 	return (ioctl(s, cmd, arg));
-#endif SYSV
+#endif /* SYSV */
 }

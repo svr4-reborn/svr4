@@ -407,7 +407,7 @@ _rs_p_rr(cp, msg, file)
 static	char nbuf[20];
 #ifndef SYSV
 extern	char *sprintf();
-#endif SYSV
+#endif /* SYSV */
 
 /* TWG name of same function */
 char *

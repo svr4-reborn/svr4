@@ -45,7 +45,7 @@
 
 #ifdef SYSV
 #define bcopy(s1, s2, len)	memcpy(s2, s1, len)
-#endif SYSV
+#endif /* SYSV */
 
 /*
  * Internet version.
