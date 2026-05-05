@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import dataclasses
 import os
 import shlex
@@ -60,13 +61,14 @@ class BuildPlan:
 
 
 class BuildRunner:
-    def __init__(self, workspace_root: Path, builddir: Path, toolchain: Toolchain, variables: dict[str, str], profiles: dict[str, dict[str, Any]], source_views: dict[str, dict[str, Any]], dry_run: bool = False):
+    def __init__(self, workspace_root: Path, builddir: Path, toolchain: Toolchain, variables: dict[str, str], profiles: dict[str, dict[str, Any]], source_views: dict[str, dict[str, Any]], dry_run: bool = False, parallel_enabled: bool = True):
         self.workspace_root = workspace_root
         self.builddir = builddir
         self.toolchain = toolchain
         self.profiles = profiles
         self.source_views = source_views
         self.dry_run = dry_run
+        self.parallel_enabled = parallel_enabled
         self.failures: list[str] = []
         self.variables = {
             'workspace_root': str(self.workspace_root),
@@ -353,6 +355,24 @@ class BuildRunner:
             return False
         return _bool_value(raw_value, 'continue_on_error')
 
+    def _step_parallel_workers(self, step: dict[str, Any]) -> int:
+        if not self.parallel_enabled:
+            return 1
+
+        raw_parallel = self._step_scalar(step, 'parallel')
+        raw_jobs = self._step_scalar(step, 'jobs')
+
+        if raw_parallel is not None and not _bool_value(raw_parallel, 'parallel'):
+            return 1
+
+        if raw_jobs is not None:
+            return _positive_int_value(raw_jobs, 'jobs')
+
+        if raw_parallel is None:
+            return 1
+
+        return max(1, os.cpu_count() or 1)
+
     def _discover_sources(self, step: dict[str, Any], field_name: str) -> list[str]:
         raw_discover = step.get('discover')
         if not isinstance(raw_discover, dict):
@@ -457,17 +477,50 @@ class BuildRunner:
         had_failures = False
         continue_on_error = self._should_continue_on_error(step)
         env = self._resolve_env(step)
-        for source in sources:
+        compile_jobs: list[tuple[int, list[str], Path, Path]] = []
+        for index, source in enumerate(sources):
             source_path = self._resolve_source_path(step, source)
             cwd = source_path.parent if self._uses_source_view(step) else self._resolve_cwd(step)
             resolved_source = source_path.name if self._uses_source_view(step) else self._resolve_text(source)
             output = output_dir / Path(source).with_suffix('.o')
             output.parent.mkdir(parents=True, exist_ok=True)
             command = [compiler, *flags, '-c', resolved_source, '-o', str(output)]
-            if self._run_command(command, cwd=cwd, env=env, step_index=step_index, continue_on_error=continue_on_error):
-                outputs.append(output)
-            else:
-                had_failures = True
+            compile_jobs.append((index, command, cwd, output))
+
+        workers = min(len(compile_jobs), self._step_parallel_workers(step))
+        if workers > 1:
+            print(f'  [{step_index}] running {len(compile_jobs)} compile commands with {workers} workers')
+
+        def run_compile(job: tuple[int, list[str], Path, Path]) -> tuple[int, Path, bool]:
+            index, command, cwd, output = job
+            success = self._run_command(command, cwd=cwd, env=env, step_index=step_index, continue_on_error=continue_on_error)
+            return index, output, success
+
+        if workers <= 1:
+            for job in compile_jobs:
+                _, output, success = run_compile(job)
+                if success:
+                    outputs.append(output)
+                else:
+                    had_failures = True
+            return outputs, had_failures
+
+        indexed_outputs: dict[int, Path] = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_job = {executor.submit(run_compile, job): job for job in compile_jobs}
+            try:
+                for future in concurrent.futures.as_completed(future_to_job):
+                    index, output, success = future.result()
+                    if success:
+                        indexed_outputs[index] = output
+                    else:
+                        had_failures = True
+            except subprocess.CalledProcessError:
+                for future in future_to_job:
+                    future.cancel()
+                raise
+
+        outputs = [indexed_outputs[index] for index in sorted(indexed_outputs)]
         return outputs, had_failures
 
     def _merge_variables(self, raw_variables: dict[str, str]) -> None:
@@ -488,11 +541,12 @@ class BuildRunner:
 
 
 class UTSBuilder:
-    def __init__(self, workspace_root: Path, builddir: str, config_path: str | None, dry_run: bool = False):
+    def __init__(self, workspace_root: Path, builddir: str, config_path: str | None, dry_run: bool = False, parallel_enabled: bool = True):
         self.workspace_root = workspace_root
         self.builddir = (workspace_root / builddir).resolve()
         self.config_path = self._resolve_config_path(config_path)
         self.dry_run = dry_run
+        self.parallel_enabled = parallel_enabled
 
     def build(self, target: str, list_targets: bool = False) -> None:
         plan = _load_build_plan(self.config_path)
@@ -504,6 +558,7 @@ class UTSBuilder:
             profiles=plan.profiles,
             source_views=plan.source_views,
             dry_run=self.dry_run,
+            parallel_enabled=self.parallel_enabled,
         )
         if list_targets:
             for name, raw_target in sorted(plan.targets.items()):
@@ -615,6 +670,14 @@ def _bool_value(value: Any, field_name: str) -> bool:
     raise BuildSpecError(f'{field_name} must be a boolean')
 
 
+def _positive_int_value(value: Any, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BuildSpecError(f'{field_name} must be a positive integer')
+    if value < 1:
+        raise BuildSpecError(f'{field_name} must be greater than zero')
+    return value
+
+
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='SVR4 builder.')
     parser.add_argument('--subsystem', '-s', type=str, default='uts', help='Subsystem to build (default: uts)')
@@ -623,6 +686,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--builddir', '-b', type=str, default='build', help='Directory to place build artifacts (default: build)')
     parser.add_argument('--list-targets', action='store_true', help='List targets in the selected build config and exit')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without running them')
+    parser.add_argument('--no-parallel', action='store_true', help='Force all steps to run without parallel workers')
     return parser.parse_args()
 
 
@@ -638,6 +702,7 @@ def main() -> int:
         builddir=args.builddir,
         config_path=args.config,
         dry_run=args.dry_run,
+        parallel_enabled=not args.no_parallel,
     )
     builder.build(target=args.target, list_targets=args.list_targets)
     return 0
