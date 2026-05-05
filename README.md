@@ -6,6 +6,18 @@ This repository is not just the kernel. It is a broad source provision rooted in
 
 The tree is useful as a starting point for a kernel port or modernization project, but it helps to treat it as an imported historical source dump rather than a clean, self-describing modern project.
 
+## YAML Builder Helper
+
+The repository also includes a small Python build driver in [build.py](build.py) for the in-progress YAML-based kernel build flow.
+
+To emit a VS Code and clangd compatible compilation database while walking the selected target, use:
+
+```sh
+python3 build.py -t kernel-at386 --dry-run --emit-compile-commands
+```
+
+That writes `compile_commands.json` at the workspace root by default. You can also pass an explicit path, for example `--emit-compile-commands build/kernel-at386/compile_commands.json`.
+
 ## What this repository appears to be
 
 - An extracted `usr/src`-style source tree for a UNIX System V/386 release.

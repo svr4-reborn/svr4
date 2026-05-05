@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import dataclasses
+import json
 import os
 import shlex
 import shutil
@@ -60,8 +61,26 @@ class BuildPlan:
     targets: dict[str, dict[str, Any]]
 
 
+@dataclasses.dataclass(frozen=True)
+class CompileCommand:
+    directory: str
+    file: str
+    arguments: list[str]
+    output: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            'directory': self.directory,
+            'file': self.file,
+            'arguments': self.arguments,
+        }
+        if self.output is not None:
+            payload['output'] = self.output
+        return payload
+
+
 class BuildRunner:
-    def __init__(self, workspace_root: Path, builddir: Path, toolchain: Toolchain, variables: dict[str, str], profiles: dict[str, dict[str, Any]], source_views: dict[str, dict[str, Any]], dry_run: bool = False, parallel_enabled: bool = True):
+    def __init__(self, workspace_root: Path, builddir: Path, toolchain: Toolchain, variables: dict[str, str], profiles: dict[str, dict[str, Any]], source_views: dict[str, dict[str, Any]], dry_run: bool = False, parallel_enabled: bool = True, compile_commands_path: Path | None = None):
         self.workspace_root = workspace_root
         self.builddir = builddir
         self.toolchain = toolchain
@@ -69,6 +88,8 @@ class BuildRunner:
         self.source_views = source_views
         self.dry_run = dry_run
         self.parallel_enabled = parallel_enabled
+        self.compile_commands_path = compile_commands_path
+        self.compile_commands: list[CompileCommand] = []
         self.failures: list[str] = []
         self.variables = {
             'workspace_root': str(self.workspace_root),
@@ -95,6 +116,14 @@ class BuildRunner:
             if len(self.failures) > 5:
                 preview = f'{preview}; ...'
             raise BuildSpecError(f'Build completed with {len(self.failures)} recorded failures: {preview}')
+
+    def write_compile_commands(self) -> None:
+        if self.compile_commands_path is None:
+            return
+        self.compile_commands_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = [entry.as_dict() for entry in self.compile_commands]
+        self.compile_commands_path.write_text(f'{json.dumps(payload, indent=2)}\n', encoding='utf-8')
+        print(f'Wrote {len(payload)} compile commands to {self.compile_commands_path}')
 
     def _resolve_target_order(self, targets: dict[str, dict[str, Any]], target_name: str) -> list[str]:
         order: list[str] = []
@@ -485,6 +514,7 @@ class BuildRunner:
             output = output_dir / Path(source).with_suffix('.o')
             output.parent.mkdir(parents=True, exist_ok=True)
             command = [compiler, *flags, '-c', resolved_source, '-o', str(output)]
+            self._record_compile_command(cwd=cwd, source_path=source_path, compiler=compiler, flags=flags, output=output)
             compile_jobs.append((index, command, cwd, output))
 
         workers = min(len(compile_jobs), self._step_parallel_workers(step))
@@ -523,6 +553,18 @@ class BuildRunner:
         outputs = [indexed_outputs[index] for index in sorted(indexed_outputs)]
         return outputs, had_failures
 
+    def _record_compile_command(self, cwd: Path, source_path: Path, compiler: str, flags: list[str], output: Path) -> None:
+        if self.compile_commands_path is None:
+            return
+        self.compile_commands.append(
+            CompileCommand(
+                directory=str(cwd.resolve()),
+                file=str(source_path.resolve()),
+                arguments=[compiler, *flags, '-c', str(source_path.resolve()), '-o', str(output.resolve())],
+                output=str(output.resolve()),
+            )
+        )
+
     def _merge_variables(self, raw_variables: dict[str, str]) -> None:
         unresolved = dict(raw_variables)
         while unresolved:
@@ -541,12 +583,13 @@ class BuildRunner:
 
 
 class UTSBuilder:
-    def __init__(self, workspace_root: Path, builddir: str, config_path: str | None, dry_run: bool = False, parallel_enabled: bool = True):
+    def __init__(self, workspace_root: Path, builddir: str, config_path: str | None, dry_run: bool = False, parallel_enabled: bool = True, compile_commands_path: str | None = None):
         self.workspace_root = workspace_root
         self.builddir = (workspace_root / builddir).resolve()
         self.config_path = self._resolve_config_path(config_path)
         self.dry_run = dry_run
         self.parallel_enabled = parallel_enabled
+        self.compile_commands_path = self._resolve_output_path(compile_commands_path)
 
     def build(self, target: str, list_targets: bool = False) -> None:
         plan = _load_build_plan(self.config_path)
@@ -559,6 +602,7 @@ class UTSBuilder:
             source_views=plan.source_views,
             dry_run=self.dry_run,
             parallel_enabled=self.parallel_enabled,
+            compile_commands_path=self.compile_commands_path,
         )
         if list_targets:
             for name, raw_target in sorted(plan.targets.items()):
@@ -568,12 +612,23 @@ class UTSBuilder:
                 else:
                     print(name)
             return
-        runner.run_target(plan.targets, target)
+        try:
+            runner.run_target(plan.targets, target)
+        finally:
+            runner.write_compile_commands()
 
     def _resolve_config_path(self, config_path: str | None) -> Path:
         if config_path is None:
             return (self.workspace_root / DEFAULT_UTS_CONFIG).resolve()
         candidate = Path(config_path)
+        if candidate.is_absolute():
+            return candidate
+        return (self.workspace_root / candidate).resolve()
+
+    def _resolve_output_path(self, output_path: str | None) -> Path | None:
+        if output_path is None:
+            return None
+        candidate = Path(output_path)
         if candidate.is_absolute():
             return candidate
         return (self.workspace_root / candidate).resolve()
@@ -686,6 +741,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--builddir', '-b', type=str, default='build', help='Directory to place build artifacts (default: build)')
     parser.add_argument('--list-targets', action='store_true', help='List targets in the selected build config and exit')
     parser.add_argument('--dry-run', action='store_true', help='Print commands without running them')
+    parser.add_argument('--emit-compile-commands', nargs='?', const='compile_commands.json', metavar='PATH', help='Write a compile_commands.json-style database while processing compile steps')
     parser.add_argument('--no-parallel', action='store_true', help='Force all steps to run without parallel workers')
     return parser.parse_args()
 
@@ -703,6 +759,7 @@ def main() -> int:
         config_path=args.config,
         dry_run=args.dry_run,
         parallel_enabled=not args.no_parallel,
+        compile_commands_path=args.emit_compile_commands,
     )
     builder.build(target=args.target, list_targets=args.list_targets)
     return 0
