@@ -797,9 +797,7 @@ def _write_direct(output_path: Path, conf_root: Path, devices: list[DeviceSpec],
     for device in devices:
         pack_dir = conf_root / "pack.d" / device.name
         if device.name in configured_names:
-            driver_object = pack_dir / "Driver.o"
-            if driver_object.exists():
-                lines.append(str(driver_object))
+            lines.append(str(pack_dir / "Driver.o"))
             space_c = pack_dir / "space.c"
             if space_c.exists():
                 lines.append(str(space_c))
@@ -811,9 +809,7 @@ def _write_direct(output_path: Path, conf_root: Path, devices: list[DeviceSpec],
     for filesystem in filesystems:
         pack_dir = conf_root / "pack.d" / filesystem.name
         if filesystem.configured:
-            driver_object = pack_dir / "Driver.o"
-            if driver_object.exists():
-                lines.append(str(driver_object))
+            lines.append(str(pack_dir / "Driver.o"))
             space_c = pack_dir / "space.c"
             if space_c.exists():
                 lines.append(str(space_c))
