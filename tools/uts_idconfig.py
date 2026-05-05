@@ -1023,8 +1023,9 @@ def _build_manifest(
 
 def _stage_static_cf_files(conf_root: Path, output_dir: Path) -> None:
     source_vuifile = conf_root / "cf.d" / "vuifile"
-    if source_vuifile.exists():
-        shutil.copyfile(source_vuifile, output_dir / "vuifile")
+    destination_vuifile = output_dir / "vuifile"
+    if source_vuifile.exists() and source_vuifile != destination_vuifile:
+        shutil.copyfile(source_vuifile, destination_vuifile)
 
 
 def main() -> int:

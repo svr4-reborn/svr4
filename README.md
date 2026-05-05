@@ -17,7 +17,7 @@ Detailed floppy-image commands and module examples now live in [docs/boot-floppy
 To emit a VS Code and clangd compatible compilation database while walking the selected target, use:
 
 ```sh
-python3 build.py -t kernel-at386 --dry-run --emit-compile-commands
+python3 build.py -t kernel-system-at386 --dry-run --emit-compile-commands
 ```
 
 That writes `compile_commands.json` at the workspace root by default. You can also pass an explicit path, for example `--emit-compile-commands build/kernel-at386/compile_commands.json`.
