@@ -450,15 +450,43 @@ targets:
                 chmod 755 "$out"
                 exit 0
               fi
+              if [ "${{src##*.}}" = "s" ] || [ "${{src##*.}}" = "S" ] || [ "${{src##*.}}" = "i" ]; then
+                if [ -z "$out" ]; then
+                  out="${{src%.*}}.o"
+                fi
+                exec python3 "{workspace_root}/tools/legacy_as.py" -o "$out" "$src"
+              fi
               exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin "$@"
               EOF
               chmod 755 "$legacy_bin/cc"
+              cp "{workspace_root}/tools/legacy_as.py" "$legacy_bin/as"
+              chmod 755 "$legacy_bin/as"
+              cp "{workspace_root}/tools/legacy_ld.py" "$legacy_bin/ld"
+              chmod 755 "$legacy_bin/ld"
               export PATH="$legacy_bin:$PATH"
               stage_root="{legacy_stage_root}"
               mkdir -p "$stage_root/uts/i386"
               rm -rf "$stage_root/tools" "{fp_stage_root}"
               cp -a "{workspace_root}/tools" "$stage_root/"
               cp -a "{workspace_root}/uts/i386/fp" "$stage_root/uts/i386/"
+      - kind: command
+        argv:
+          - python3
+          - tools/uts_fp_symvals.py
+          - --workspace-root
+          - "{workspace_root}"
+          - --fp-root
+          - "{fp_stage_root}"
+          - --cc
+          - "{cc}"
+      - kind: command
+        argv:
+          - sh
+          - -eu
+          - -c
+          - |
+              legacy_bin="{builddir}/uts/i386/tools/legacy-host/bin"
+              export PATH="$legacy_bin:$PATH"
               mkdir -p "{system_root}/etc" "{system_root}/sbin"
               cd "{fp_stage_root}"
               make -f fp.mk \
@@ -473,7 +501,11 @@ targets:
                 "INCRT={workspace_root}/uts/i386" \
                 "BUS=AT386" \
                 "ARCH=AT386" \
-                install
+                tools emulator.rel1
+              cp "emulator.rel1" "{system_root}/sbin/emulator.rel1"
+              ln -sf emulator.rel1 "{system_root}/sbin/emulator"
+              ln -sf ../sbin/emulator "{system_root}/etc/emulator"
+              ln -sf ../sbin/emulator.rel1 "{system_root}/etc/emulator.rel1"
 
   historical-platform-at386:
     description: Aggregate the historically separate bootstrap and floating-point emulator build families.

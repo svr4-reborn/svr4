@@ -19,7 +19,7 @@ def find_comment_index(line: str) -> int:
                 quote = None
             continue
         if char == '/' and quote is None:
-            if index == 0 or line[:index].strip() == '' or line[index - 1].isspace():
+            if index == 0 or line[index - 1] != '\\':
                 return index
     return -1
 
@@ -29,10 +29,10 @@ def rewrite_legacy_comment_syntax(source_text: str) -> str:
     for line in source_text.splitlines():
         comment_index = find_comment_index(line)
         if comment_index == -1:
-            rewritten.append(line.replace('\\*', '*'))
+            rewritten.append(line.replace('\\*', '*').replace('\\/', '/'))
             continue
         normalized = f'{line[:comment_index]}#{line[comment_index + 1:]}'
-        rewritten.append(normalized.replace('\\*', '*'))
+        rewritten.append(normalized.replace('\\*', '*').replace('\\/', '/'))
     return '\n'.join(rewritten) + '\n'
 
 
