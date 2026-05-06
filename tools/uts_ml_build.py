@@ -34,19 +34,19 @@ SYMVAL_MEMBER_EXPRESSIONS: list[tuple[str, str]] = [
     ('t_edi', '__builtin_offsetof(struct tss386, t_edi)'),
     ('t_esp0', '__builtin_offsetof(struct tss386, t_esp0)'),
     ('t_ldt', '__builtin_offsetof(struct tss386, t_ldt)'),
-    ('u_tss', '__builtin_offsetof(struct user, u_tss)'),
-    ('u_procp', '__builtin_offsetof(struct user, u_procp)'),
-    ('u_callgatep', '__builtin_offsetof(struct user, u_callgatep)'),
-    ('u_callgate', '__builtin_offsetof(struct user, u_callgate)'),
-    ('u_weitek', '__builtin_offsetof(struct user, u_weitek)'),
-    ('u_weitek_reg', '__builtin_offsetof(struct user, u_weitek_reg)'),
-    ('u_fpintgate', '__builtin_offsetof(struct user, u_fpintgate)'),
-    ('u_ldtlimit', '__builtin_offsetof(struct user, u_ldtlimit)'),
-    ('u_debugreg', '__builtin_offsetof(struct user, u_debugreg)'),
-    ('u_debugon', '__builtin_offsetof(struct user, u_debugon)'),
-    ('u_sigfault', '__builtin_offsetof(struct user, u_sigfault)'),
-    ('u_renv', '__builtin_offsetof(struct user, u_renv)'),
-    ('u_fault_catch', '__builtin_offsetof(struct user, u_fault_catch)'),
+    ('u_tss', '(UVUBLK + __builtin_offsetof(struct user, u_tss))'),
+    ('u_procp', '(UVUBLK + __builtin_offsetof(struct user, u_procp))'),
+    ('u_callgatep', '(UVUBLK + __builtin_offsetof(struct user, u_callgatep))'),
+    ('u_callgate', '(UVUBLK + __builtin_offsetof(struct user, u_callgate))'),
+    ('u_weitek', '(UVUBLK + __builtin_offsetof(struct user, u_weitek))'),
+    ('u_weitek_reg', '(UVUBLK + __builtin_offsetof(struct user, u_weitek_reg))'),
+    ('u_fpintgate', '(UVUBLK + __builtin_offsetof(struct user, u_fpintgate))'),
+    ('u_ldtlimit', '(UVUBLK + __builtin_offsetof(struct user, u_ldtlimit))'),
+    ('u_debugreg', '(UVUBLK + __builtin_offsetof(struct user, u_debugreg))'),
+    ('u_debugon', '(UVUBLK + __builtin_offsetof(struct user, u_debugon))'),
+    ('u_sigfault', '(UVUBLK + __builtin_offsetof(struct user, u_sigfault))'),
+    ('u_renv', '(UVUBLK + __builtin_offsetof(struct user, u_renv))'),
+    ('u_fault_catch', '(UVUBLK + __builtin_offsetof(struct user, u_fault_catch))'),
     ('fc_flags', '__builtin_offsetof(fault_catch_t, fc_flags)'),
     ('fc_errno', '__builtin_offsetof(fault_catch_t, fc_errno)'),
     ('fc_func', '__builtin_offsetof(fault_catch_t, fc_func)'),
@@ -125,6 +125,22 @@ def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> Non
     rendered = ' '.join(command)
     print(f'    {rendered}')
     subprocess.run(command, cwd=cwd, env=env, check=True)
+
+
+def choose_partial_linker(default_ld: str) -> list[str]:
+    version = subprocess.run(
+        [default_ld, '--version'],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if 'mold' in version.stdout:
+        bfd = shutil.which('ld.bfd')
+        if bfd is not None:
+            # GNU ld.bfd with -d allocates COMMONs during -r links, which keeps
+            # assembly references like symbol+offset from collapsing to absolutes.
+            return [bfd, '-m', 'elf_i386', '-d']
+    return [default_ld]
 
 
 def compile_generated_assembly(cc: str, cflags: list[str], source: Path, output: Path, cwd: Path) -> None:
@@ -227,21 +243,33 @@ def generate_symvals_assembly(cc: str, cflags: list[str], work_ml_root: Path, in
     )
 
 
-def generate_symvals_header(workspace_root: Path, work_ml_root: Path) -> None:
+def generate_symvals_header(cc: str, cflags: list[str], work_ml_root: Path) -> None:
     requested = set(SYMVAL_HEADER_NAMES)
+    source = work_ml_root / 'symvals-header-direct.c'
+    source.write_text(
+        ''.join(f'#include "{relative_path.split("uts/i386/", 1)[1]}"\n' for relative_path in SYMVAL_HEADER_PATHS),
+        encoding='utf-8',
+    )
+
+    result = subprocess.run(
+        [cc, *cflags, '-E', '-dM', source.name],
+        check=True,
+        cwd=work_ml_root,
+        capture_output=True,
+        text=True,
+    )
+
     lines: list[str] = []
     seen: set[str] = set()
-    for relative_path in SYMVAL_HEADER_PATHS:
-        header_path = workspace_root / relative_path
-        for line in header_path.read_text(encoding='utf-8', errors='replace').splitlines():
-            match = DEFINE_PATTERN.match(line)
-            if not match:
-                continue
-            name = match.group(1)
-            if name not in requested or name in seen:
-                continue
-            seen.add(name)
-            lines.append(line)
+    for line in result.stdout.splitlines():
+        match = DEFINE_PATTERN.match(line)
+        if not match:
+            continue
+        name = match.group(1)
+        if name not in requested or name in seen:
+            continue
+        seen.add(name)
+        lines.append(line)
 
     (work_ml_root / 'symvals.h').write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
@@ -367,6 +395,7 @@ def main() -> int:
     write_setfilter_wrapper(work_ml_root, workspace_root)
     symval_cflags = gensymvals_cflags(args.cflag)
     include_vpix = should_emit_vpix_symbols(args.cflag)
+    partial_ld = choose_partial_linker(args.ld)
 
     env = dict(os.environ)
     env['CC'] = args.cc
@@ -375,7 +404,7 @@ def main() -> int:
     env['CCSTYPE'] = 'ELF'
 
     generate_symvals_assembly(args.cc, symval_cflags, work_ml_root, include_vpix)
-    generate_symvals_header(workspace_root, work_ml_root)
+    generate_symvals_header(args.cc, symval_cflags, work_ml_root)
     sanitize_symvals_assembly(work_ml_root)
     sanitize_symvals_header(work_ml_root)
 
@@ -404,7 +433,7 @@ def main() -> int:
     locore_obj = obj_root / 'locore.o'
     run(
         [
-            args.ld,
+            *partial_ld,
             *args.ld_flag,
             '-r',
             '-o',
@@ -427,7 +456,7 @@ def main() -> int:
     start_obj = obj_root / 'start.o'
     run(
         [
-            args.ld,
+            *partial_ld,
             *args.ld_flag,
             '-r',
             '-o',

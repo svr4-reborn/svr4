@@ -6,10 +6,15 @@ toolchain:
     - -std=gnu89
     - -fcommon
     - -fno-builtin
+    - -fno-tree-vectorize
     - -fno-unwind-tables
     - -fno-asynchronous-unwind-tables
     - -O2
     - -m32
+    - -mgeneral-regs-only
+    - -mno-mmx
+    - -mno-sse
+    - -mno-sse2
     - -Werror
     - -DREL="4"
     - -DVER="2.1"
@@ -249,10 +254,10 @@ targets:
           - "{floppy_idconfig_manifest}"
           - --obj-root
           - "{obj_root}"
+          - --enable-module
+          - ramd
           - --exclude-module
           - bfs
-          - --exclude-module
-          - cmux
           - --exclude-module
           - fdfs
           - --exclude-module
@@ -263,6 +268,8 @@ targets:
           - intp
           - --exclude-module
           - kdb
+          - --exclude-module
+          - kdb-util
           - --exclude-module
           - arp
           - --exclude-module
@@ -337,8 +344,12 @@ targets:
           - --cflag=-std=gnu89
           - --cflag=-fcommon
           - --cflag=-fno-builtin
+          - --cflag=-fno-tree-vectorize
           - --cflag=-O2
           - --cflag=-m32
+          - --cflag=-mno-mmx
+          - --cflag=-mno-sse
+          - --cflag=-mno-sse2
           - --cflag=-D_KERNEL
           - --cflag=-DAT386
           - --cflag=-DWEITEK
@@ -373,12 +384,17 @@ targets:
           - --cflag=-std=gnu89
           - --cflag=-fcommon
           - --cflag=-fno-builtin
+          - --cflag=-fno-tree-vectorize
           - --cflag=-O2
           - --cflag=-m32
+          - --cflag=-mno-mmx
+          - --cflag=-mno-sse
+          - --cflag=-mno-sse2
           - --cflag=-D_KERNEL
           - --cflag=-DAT386
           - --cflag=-DWEITEK
           - --cflag=-DWEITEK_EMULATOR
+          - --cflag=-DRAMD_BOOT
           - --cflag=-DVPIX
           - --cflag=-DSYSV
           - --cflag=-DSVR40
@@ -494,9 +510,17 @@ targets:
           - --cflag
           - -fno-builtin
           - --cflag
+          - -fno-tree-vectorize
+          - --cflag
           - -O2
           - --cflag
           - -m32
+          - --cflag
+          - -mno-mmx
+          - --cflag
+          - -mno-sse
+          - --cflag
+          - -mno-sse2
           - --cflag
           - -D_KERNEL
           - --cflag
@@ -505,6 +529,8 @@ targets:
           - -DWEITEK
           - --cflag
           - -DWEITEK_EMULATOR
+          - --cflag
+          - -DRAMD_BOOT
           - --cflag
           - -DVPIX
           - --cflag
@@ -542,9 +568,17 @@ targets:
           - --cflag
           - -fno-builtin
           - --cflag
+          - -fno-tree-vectorize
+          - --cflag
           - -O2
           - --cflag
           - -m32
+          - --cflag
+          - -mno-mmx
+          - --cflag
+          - -mno-sse
+          - --cflag
+          - -mno-sse2
           - --cflag
           - -D_KERNEL
           - --cflag
@@ -553,6 +587,8 @@ targets:
           - -DWEITEK
           - --cflag
           - -DWEITEK_EMULATOR
+          - --cflag
+          - -DRAMD_BOOT
           - --cflag
           - -DVPIX
           - --cflag
@@ -616,7 +652,7 @@ targets:
                 chmod 755 "$out"
                 exit 0
               fi
-              exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin "$@"
+              exec "{cc}" -m32 -std=gnu89 -fcommon -fno-builtin -fno-tree-vectorize -mno-mmx -mno-sse -mno-sse2 "$@"
               EOF
               chmod 755 "$legacy_bin/cc"
               cat >"$legacy_bin/as" <<'EOF'

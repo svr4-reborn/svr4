@@ -137,6 +137,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--obj-root", required=True)
+    parser.add_argument("--enable-module", action="append", default=[])
     parser.add_argument("--exclude-module", action="append", default=[])
     return parser.parse_args()
 
@@ -1047,18 +1048,34 @@ def main() -> int:
     ]
     assignments = _parse_sassign(conf_root / "cf.d" / "sassign")
 
+    enabled_modules = {_normalize_module_name(name) for name in args.enable_module}
     excluded_modules = {_normalize_module_name(name) for name in args.exclude_module}
-    if excluded_modules:
+
+    if enabled_modules or excluded_modules:
         controllers = [
-            replace(controller, configured=False)
-            if _normalize_module_name(controller.name) in excluded_modules
-            else controller
+            replace(
+                controller,
+                configured=(
+                    True
+                    if _normalize_module_name(controller.name) in enabled_modules
+                    else False
+                    if _normalize_module_name(controller.name) in excluded_modules
+                    else controller.configured
+                ),
+            )
             for controller in controllers
         ]
         filesystems = [
-            replace(filesystem, configured=False)
-            if _normalize_module_name(filesystem.name) in excluded_modules
-            else filesystem
+            replace(
+                filesystem,
+                configured=(
+                    True
+                    if _normalize_module_name(filesystem.name) in enabled_modules
+                    else False
+                    if _normalize_module_name(filesystem.name) in excluded_modules
+                    else filesystem.configured
+                ),
+            )
             for filesystem in filesystems
         ]
 
