@@ -4,17 +4,17 @@ This document collects the detailed command-level workflows for the SVR4 boot fl
 
 ## Reusable Module
 
-The reusable implementation lives in `tools.floppyfs`, backed by the smaller internal package under `tools/floppyfslib/`.
+The reusable implementation lives in `uts.tools.floppyfs`, backed by the smaller internal package under `uts/tools/floppyfslib/`.
 
 Example import:
 
 ```python
 from pathlib import Path
-from tools.floppyfs import detect_layout, load_replacement_set, validate_replacements
+from uts.tools.floppyfs import detect_layout, load_replacement_set, validate_replacements
 
 image = Path("original_diskettes/Base 01 (2.1a).img")
 layout = detect_layout(image)
-replacements = load_replacement_set(Path("build-specs/uts/i386/boot-floppy-replacements.json"), "kernel-at386")
+replacements = load_replacement_set(Path("uts/build-specs/i386/boot-floppy-replacements.json"), "kernel-at386")
 validate_replacements(image, replacements)
 ```
 
@@ -23,37 +23,37 @@ validate_replacements(image, replacements)
 Build the base hybrid floppy image:
 
 ```sh
-python3 build.py -t boot-floppy-hybrid-at386
+python3 uts/build.py -t boot-floppy-hybrid-at386
 ```
 
 Build the AT386 boot floppy with the locally built kernel and the rest of the reference floppy filesystem:
 
 ```sh
-python3 build.py -t boot-floppy-at386
+python3 uts/build.py -t boot-floppy-at386
 ```
 
 Build the repo-owned named replacement set:
 
 ```sh
-python3 build.py -t boot-floppy-hybrid-at386-labeled
+python3 uts/build.py -t boot-floppy-hybrid-at386-labeled
 ```
 
 Build the AT386 boot floppy plus the labeled replacement set:
 
 ```sh
-python3 build.py -t boot-floppy-at386-labeled
+python3 uts/build.py -t boot-floppy-at386-labeled
 ```
 
 Validate the named replacement set without writing a new image:
 
 ```sh
-python3 build.py -t boot-floppy-validate-replacements-at386-labeled
+python3 uts/build.py -t boot-floppy-validate-replacements-at386-labeled
 ```
 
 Validate the local-kernel boot replacement set without writing a new image:
 
 ```sh
-python3 build.py -t boot-floppy-validate-replacements-at386
+python3 uts/build.py -t boot-floppy-validate-replacements-at386
 ```
 
 ## CLI Commands
@@ -61,13 +61,13 @@ python3 build.py -t boot-floppy-validate-replacements-at386
 Inspect the detected boot boundary and filesystem roots:
 
 ```sh
-python3 tools/boot_floppy_image.py inspect --image "original_diskettes/Base 01 (2.1a).img"
+python3 uts/tools/boot_floppy_image.py inspect --image "original_diskettes/Base 01 (2.1a).img"
 ```
 
 Extract an s5 file from the image:
 
 ```sh
-python3 tools/boot_floppy_image.py extract-s5-file \
+python3 uts/tools/boot_floppy_image.py extract-s5-file \
   --image "original_diskettes/Base 01 (2.1a).img" \
   --target-path /unix \
   --output build/boot-media/unix.reference
@@ -76,16 +76,16 @@ python3 tools/boot_floppy_image.py extract-s5-file \
 Diff an s5 file in the image against a host file:
 
 ```sh
-python3 tools/boot_floppy_image.py diff-s5-file \
+python3 uts/tools/boot_floppy_image.py diff-s5-file \
   --image build/boot-media/base01-hybrid.img \
   --target-path /LABEL \
-  --source tools/boot-media/label.hybrid
+  --source uts/tools/boot-media/label.hybrid
 ```
 
 Replace an s5 file in an existing image:
 
 ```sh
-python3 tools/boot_floppy_image.py replace-s5-file \
+python3 uts/tools/boot_floppy_image.py replace-s5-file \
   --image build/boot-media/base01-hybrid.img \
   --target-path /unix \
   --source build/boot-media/unix.reference
@@ -94,22 +94,22 @@ python3 tools/boot_floppy_image.py replace-s5-file \
 Validate one or more requested replacements against an image without writing changes:
 
 ```sh
-python3 tools/boot_floppy_image.py validate-replacements \
+python3 uts/tools/boot_floppy_image.py validate-replacements \
   --image "original_diskettes/Base 01 (2.1a).img" \
-  --replacement-manifest build-specs/uts/i386/boot-floppy-replacements.json \
+  --replacement-manifest uts/build-specs/i386/boot-floppy-replacements.json \
   --replacement-set kernel-at386
 ```
 
 Build a hybrid image with manifest-backed and inline replacements:
 
 ```sh
-python3 tools/boot_floppy_image.py build-hybrid \
+python3 uts/tools/boot_floppy_image.py build-hybrid \
   --reference-image "original_diskettes/Base 01 (2.1a).img" \
   --bootloader build/uts/i386/boot/build/fdboot \
   --output build/boot-media/base01-boot.img \
-  --replacement-manifest build-specs/uts/i386/boot-floppy-replacements.json \
+  --replacement-manifest uts/build-specs/i386/boot-floppy-replacements.json \
   --replacement-set kernel-at386 \
-  --replace-s5-file /LABEL=tools/boot-media/label.hybrid
+  --replace-s5-file /LABEL=uts/tools/boot-media/label.hybrid
 ```
 
 ## Current Behavior
@@ -125,7 +125,7 @@ If the BIOS loads the floppy image but nothing is printed afterward, treat that 
 Rebuild the local bootloader and hybrid image first:
 
 ```sh
-python3 build.py -t boot-floppy-hybrid-at386-labeled
+python3 uts/build.py -t boot-floppy-hybrid-at386-labeled
 ```
 
 The boot build now preserves an unstripped linked image at `build/uts/i386/boot/build/fdboot.debug.elf` alongside the stripped boot binary used in the floppy image.
@@ -139,7 +139,7 @@ The hybrid image builder now overlays the local bootloader onto the reference im
 For repeatable launch and probe flows, use the helper script:
 
 ```sh
-python3 tools/debug_hybrid_boot.py probe --mode handoff
+python3 uts/tools/debug_hybrid_boot.py probe --mode handoff
 ```
 
 Available probe modes:
@@ -151,7 +151,7 @@ Available probe modes:
 Start QEMU with a halted CPU and GDB stub:
 
 ```sh
-python3 tools/debug_hybrid_boot.py launch --foreground
+python3 uts/tools/debug_hybrid_boot.py launch --foreground
 ```
 
 Then attach GDB in a second terminal:
@@ -170,7 +170,7 @@ Do not use `hb` here. The QEMU GDB stub on this setup accepts software breakpoin
 Recommended debug flow:
 
 - First confirm stage 1 runs by stopping at `0x7c00`.
-- Step through `firststage`, `readboot`, and the `lret` in `uts/i386/boot/at386/start.s`, or use `python3 tools/debug_hybrid_boot.py probe --mode handoff` to do that automatically.
+- Step through `firststage`, `readboot`, and the `lret` in `uts/i386/boot/at386/start.s`, or use `python3 uts/tools/debug_hybrid_boot.py probe --mode handoff` to do that automatically.
 - If execution reaches the relocated second stage, load symbols from `build/uts/i386/boot/build/fdboot.debug.elf` and switch to 32-bit mode in GDB.
 
 Example follow-up commands once you have crossed into the second stage:

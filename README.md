@@ -12,7 +12,7 @@ This project uses a custom build system. It is quite basic and stupid, and kinda
 Provide a boot diskette image under `original_diskettes/Base 01 (2.1a).img` and run the following to compile it:
 
 ```sh
-python3 build.py -t boot-floppy-at386
+python3 uts/build.py -t boot-floppy-at386
 ```
 
 This should create a boot floppy under `build/boot-media/base01-boot.img`. Most kernel drivers are at present excluded from this image, including the hard drive driver `hd`, but it does load userspace.
