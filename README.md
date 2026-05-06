@@ -43,7 +43,6 @@ The code won't be permanently gone, it was on git after all, and this entire rep
 In no particular order:
 
 - The build system is kinda garbage. In the far future, where self-hosting can be considered, it not only brings in Python as a dependency (not the end of the world), but also doesn't really make it possible to relink the kernel on system. This is a issue since that is how kernel modules are handled
-  - Splitting `kernel.yaml` into multiple files would be a good start on cleaning up the build spec
 - On the topic of build systems and modules, probably should find a way to create a HD image as a build target, with some valid rootfs
   - The above would be easier with a old-UFS FUSE driver that has proper write support and all that
 - On the topic of userspace, a userspace bootstrap tree with xbstrap or jinx would be a good idea

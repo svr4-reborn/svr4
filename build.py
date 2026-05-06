@@ -21,6 +21,13 @@ except ImportError:  # pragma: no cover - exercised by runtime setup, not tests.
 
 
 DEFAULT_UTS_CONFIG = Path('build-specs/uts/i386/kernel.yaml')
+MERGEABLE_BUILD_SPEC_SECTIONS = (
+    'toolchain',
+    'variables',
+    'profiles',
+    'source_views',
+    'targets',
+)
 
 
 class BuildSpecError(RuntimeError):
@@ -637,13 +644,7 @@ class UTSBuilder:
 def _load_build_plan(config_path: Path) -> BuildPlan:
     if yaml is None:
         raise BuildSpecError('PyYAML is required. Install it with: pip install -r requirements.txt')
-    if not config_path.exists():
-        raise BuildSpecError(f'Build config not found: {config_path}')
-
-    raw = yaml.safe_load(config_path.read_text(encoding='utf-8'))
-    if not isinstance(raw, dict):
-        raise BuildSpecError(f'Build config must be a mapping: {config_path}')
-    typed_raw = cast(dict[Any, Any], raw)
+    typed_raw = _load_build_spec_mapping(config_path, ())
 
     raw_targets = typed_raw.get('targets')
     if not isinstance(raw_targets, dict) or not raw_targets:
@@ -672,6 +673,51 @@ def _load_build_plan(config_path: Path) -> BuildPlan:
         source_views={str(name): _mapping(view, f'source_views.{name}') for name, view in typed_source_views.items()},
         targets={str(name): _mapping(target, f'targets.{name}') for name, target in typed_targets.items()},
     )
+
+
+def _load_build_spec_mapping(config_path: Path, ancestry: tuple[Path, ...]) -> dict[str, Any]:
+    resolved_config_path = config_path.resolve()
+    if resolved_config_path in ancestry:
+        cycle = ' -> '.join(str(path) for path in (*ancestry, resolved_config_path))
+        raise BuildSpecError(f'Build config include cycle detected: {cycle}')
+    if not resolved_config_path.exists():
+        raise BuildSpecError(f'Build config not found: {resolved_config_path}')
+
+    raw = yaml.safe_load(resolved_config_path.read_text(encoding='utf-8'))
+    if raw is None:
+        typed_raw: dict[Any, Any] = {}
+    elif isinstance(raw, dict):
+        typed_raw = cast(dict[Any, Any], raw)
+    else:
+        raise BuildSpecError(f'Build config must be a mapping: {resolved_config_path}')
+
+    merged: dict[str, Any] = {section: {} for section in MERGEABLE_BUILD_SPEC_SECTIONS}
+    includes = _string_list(typed_raw.get('includes', []), f'includes in {resolved_config_path}')
+    for include in includes:
+        include_path = Path(include)
+        if not include_path.is_absolute():
+            include_path = (resolved_config_path.parent / include_path).resolve()
+        included_mapping = _load_build_spec_mapping(include_path, (*ancestry, resolved_config_path))
+        _merge_build_spec_mapping(merged, included_mapping, include_path)
+
+    _merge_build_spec_mapping(merged, typed_raw, resolved_config_path)
+    return merged
+
+
+def _merge_build_spec_mapping(merged: dict[str, Any], incoming: dict[str, Any], source_path: Path) -> None:
+    for section in MERGEABLE_BUILD_SPEC_SECTIONS:
+        raw_section = incoming.get(section)
+        if raw_section is None:
+            continue
+        section_mapping = _mapping(raw_section, f'{section} in {source_path}')
+        merged_section = cast(dict[str, Any], merged[section])
+        for key, value in section_mapping.items():
+            string_key = str(key)
+            if string_key in merged_section:
+                if merged_section[string_key] != value:
+                    raise BuildSpecError(f'Duplicate build spec entry for {section}.{string_key} while loading {source_path}')
+                continue
+            merged_section[string_key] = value
 
 
 def _mapping(value: Any, field_name: str) -> dict[str, Any]:
