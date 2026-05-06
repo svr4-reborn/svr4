@@ -1,7 +1,0 @@
-#ident	"@(#)vi:PRESERVE	1.1"
-
-#
-# script to move editing files into /usr/preserve
-#
-
-/usr/lib/expreserve -

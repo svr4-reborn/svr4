@@ -1,3 +1,0 @@
-#ident	"@(#)initpkg:init.d/ANNOUNCE	1.1"
-
-echo 'System services are now being stopped.'

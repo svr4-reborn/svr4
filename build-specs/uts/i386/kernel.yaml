@@ -15,6 +15,8 @@ toolchain:
     - -mno-mmx
     - -mno-sse
     - -mno-sse2
+    - -nostdinc
+    - -nostdlib
     - -Werror
     - -DREL="4"
     - -DVER="2.1"

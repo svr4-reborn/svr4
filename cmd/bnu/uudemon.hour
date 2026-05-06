@@ -1,7 +1,0 @@
-#!/sbin/sh
-
-
-#ident	"@(#)bnu:uudemon.hour	2.2.1.1"
-
-/usr/lib/uucp/uusched &
-/usr/lib/uucp/uuxqt &

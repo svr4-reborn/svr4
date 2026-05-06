@@ -1,4 +1,0 @@
-
-.ident	"@(#)libm:i386/ansi.def	1.1"
-
-_m4_define_(`write', _write)

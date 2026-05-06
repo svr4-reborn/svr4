@@ -1,6 +1,0 @@
-#ident	"@(#)proto:i386/PACKAGES/peruser/prototype	1.1"
-
-# packaging files
-i pkginfo
-i postinstall
-i preremove

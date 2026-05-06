@@ -49,4 +49,3 @@ In no particular order:
 - On the topic of userspace, a userspace bootstrap tree with xbstrap or jinx would be a good idea
 - I can almost guarantee the code still has a trillion spots in it that are likely broken due to modern compilers interacting with code that has a tendency to use old stuff.
 - Perhaps a clang format file? A part of me wants to fix things up fully first before I reformat all that, but I'm not sure lol
-- Removing the old Makefiles and stuff when everything works to clean the repo up would also be a good idea, right now there are still there as reference

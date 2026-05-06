@@ -1,5 +1,0 @@
-#ident	"@(#)passwd:passwd.dfl	1.2.2.1"
-MAXWEEKS=24
-MINWEEKS=0
-WARNWEEKS=1
-PASSLENGTH=6

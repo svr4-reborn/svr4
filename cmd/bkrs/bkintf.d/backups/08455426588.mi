@@ -1,3 +1,0 @@
-#ident	"@(#)bkrs:bkintf.d/backups/08455426588.mi	1.4.3.1"
-#status#new
-main:#backup_service:extended^Extended Backup Services^backup.menu

@@ -53,6 +53,9 @@ COMMON_CFLAGS = [
     '-falign-jumps=1',
     '-falign-labels=1',
     '-falign-loops=1',
+    '-mgeneral-regs-only',
+    '-nostdinc',
+    '-nostdlib',
     '-Os',
 ]
 
@@ -117,8 +120,6 @@ def common_cpp_flags(workspace_root: Path, include_root: Path, extra_define: str
     flags = [
         *CPP_DEFINES,
         f'-I{include_root}',
-        f'-I{workspace_root / "head"}',
-        f'-I{workspace_root / "cmd/sgs/inc/common"}',
     ]
     if extra_define:
         flags.append(extra_define)
