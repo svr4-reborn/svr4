@@ -104,6 +104,7 @@ struct sectinfo {
 	ulong offset;
 	ulong start;
 	ulong size;
+	ulong file_size;
 	ulong type;
 };
 
@@ -265,7 +266,8 @@ loadexe()
 
 		if ((bsect.type == TLOAD) || (bsect.type == DLOAD)) {
 			section[i].start = bsect.addr & MASK;
-			section[i].size = bsect.size;
+			section[i].size = bsect.memsize;
+			section[i].file_size = bsect.size;
 			section[i].offset = bsect.offset;
 			section[i].type = bsect.type;
 			i++;
@@ -301,13 +303,22 @@ loadexe()
 			tot_size = section[i].offset;
 		}
 		/* load the section */
-		BL_file_read((char *)section[i].start, mem_alias_sel, section[i].size,
+		BL_file_read((char *)section[i].start, mem_alias_sel, section[i].file_size,
 					&actual, &status);
 		if (status == E_EOF) {
 			status = E_OK;
 		} else {
-			if ((actual != section[i].size) || (status !=E_OK))
+			if ((actual != section[i].file_size) || (status !=E_OK))
 				error(STAGE2, (ulong)status, (char *)file_read_msg);
+		}
+		if (section[i].size > section[i].file_size) {
+			char *target;
+			ulong remaining;
+
+			target = (char *)(section[i].start + section[i].file_size);
+			remaining = section[i].size - section[i].file_size;
+			while (remaining--)
+				*target++ = 0;
 		}
 		/*
 		 * Define memory segments used by the booted kernel.
@@ -320,7 +331,7 @@ loadexe()
 			binfo.memused[binfo.memusedcnt++].flags |= B_MEM_KDATA;
 			mem_top = section[i].start + section[i].size;
 		}
-		tot_size += section[i].size;
+		tot_size += section[i].file_size;
 	}
 
 	/* all done - close the file */
