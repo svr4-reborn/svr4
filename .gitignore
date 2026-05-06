@@ -5,3 +5,8 @@ compile_commands.json
 
 # This is where I keep the original disk images. They are large and should not be tracked by git.
 original_diskettes/
+*.vhd
+mnt/
+
+__pycache__/
+*.egg-info/

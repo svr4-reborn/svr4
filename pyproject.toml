@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "svr4-host-tools"
+version = "0.1.0"
+description = "Host-side tooling for building and inspecting SVR4 disk and filesystem images"
+readme = "host-tools/README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+fuse = ["pyfuse3>=3,<4"]
+
+[project.scripts]
+svr4-disk-image = "host_tools.disk.cli:main"
+svr4-ufs-mount = "host_tools.fs.ufs_fuse:main"
+
+[tool.setuptools]
+package-dir = {"" = "host-tools"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["host-tools"]
+include = ["host_tools*"]

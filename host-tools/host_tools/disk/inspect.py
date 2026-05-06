@@ -1,0 +1,115 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from .fsprobe import probe_slice_filesystem
+from .mbr import parse_mbr_sector
+from .structures import DiskImageReport, HDPDLOC, MbrInfo, PdInfo, SECTOR_SIZE, SliceFilesystem, UNIXWARE_PARTITION_TYPE, VtocInfo
+from .svr4 import is_valid_pdinfo, is_valid_vtoc, parse_pdinfo, parse_vtoc, partition_tag_name
+
+
+def find_active_unix_partition(mbr: MbrInfo):
+    for partition in mbr.partitions:
+        if partition.bootable and partition.partition_type == UNIXWARE_PARTITION_TYPE:
+            return partition
+    for partition in mbr.partitions:
+        if partition.partition_type == UNIXWARE_PARTITION_TYPE:
+            return partition
+    return None
+
+
+def read_sector(image_path: Path, sector_number: int, sector_count: int = 1) -> bytes:
+    with image_path.open('rb') as handle:
+        handle.seek(sector_number * SECTOR_SIZE)
+        return handle.read(sector_count * SECTOR_SIZE)
+
+
+def read_pdinfo(image_path: Path, partition_start: int) -> PdInfo:
+    return parse_pdinfo(read_sector(image_path, partition_start + HDPDLOC))
+
+
+def read_vtoc(image_path: Path, partition_start: int, pdinfo: PdInfo) -> VtocInfo:
+    vtoc_sector = partition_start + (pdinfo.vtoc_ptr // SECTOR_SIZE)
+    vtoc_offset = pdinfo.vtoc_ptr % SECTOR_SIZE
+    vtoc_span = max(pdinfo.vtoc_len, SECTOR_SIZE)
+    sector_count = max(1, (vtoc_offset + vtoc_span + SECTOR_SIZE - 1) // SECTOR_SIZE)
+    block = read_sector(image_path, vtoc_sector, sector_count=sector_count)
+    return parse_vtoc(block, offset=vtoc_offset)
+
+
+def read_slice_bytes(image_path: Path, absolute_start_sector: int, sector_count: int) -> bytes:
+    return read_sector(image_path, absolute_start_sector, sector_count=sector_count)
+
+
+def absolute_sector_for_slice(pdinfo: PdInfo, slice_start_sector: int) -> int:
+    return pdinfo.logical_sector_0 + slice_start_sector
+
+
+def inspect_slice_by_selector(image_path: Path, selector: str) -> tuple[DiskImageReport, SliceFilesystem]:
+    report = inspect_disk_image(image_path)
+    normalized = selector.strip().lower()
+    for slice_info in report.slice_filesystems:
+        if str(slice_info.slice_index) == normalized:
+            return report, slice_info
+    for slice_info in report.slice_filesystems:
+        for partition in report.vtoc.partitions if report.vtoc else []:
+            if partition.index == slice_info.slice_index and selector.strip().lower() == partition_tag_name(partition.tag):
+                return report, slice_info
+    raise SystemExit(f'error: no slice matching {selector!r} was found')
+
+
+def inspect_disk_image(image_path: Path) -> DiskImageReport:
+    image_path = image_path.resolve()
+    file_size = image_path.stat().st_size
+    notes: list[str] = []
+    mbr = parse_mbr_sector(read_sector(image_path, 0))
+    if mbr.signature != 0xAA55:
+        notes.append(f'Unexpected MBR signature 0x{mbr.signature:04x}; image may be unpartitioned or use a non-MBR boot sector.')
+
+    active_unix_partition = find_active_unix_partition(mbr)
+    pdinfo = None
+    vtoc = None
+    slice_filesystems: list[SliceFilesystem] = []
+
+    if active_unix_partition is None:
+        notes.append('No UNIX partition (type 0x63) was found in the MBR.')
+    else:
+        pdinfo = read_pdinfo(image_path, active_unix_partition.start_lba)
+        if not is_valid_pdinfo(pdinfo):
+            notes.append(
+                f'Invalid pdinfo sanity 0x{pdinfo.sanity:08x} at sector {active_unix_partition.start_lba + HDPDLOC}; expected 0x{0xCA5E600D:08x}.'
+            )
+        else:
+            vtoc = read_vtoc(image_path, active_unix_partition.start_lba, pdinfo)
+            if not is_valid_vtoc(vtoc):
+                notes.append(f'Invalid VTOC sanity 0x{vtoc.sanity:08x}; expected 0x{0x600DDEEE:08x}.')
+            else:
+                for partition in vtoc.partitions:
+                    if partition.tag == 0 or partition.sector_count <= 0:
+                        continue
+                    absolute_start_sector = absolute_sector_for_slice(
+                        pdinfo,
+                        partition.start_sector,
+                    )
+                    slice_image = read_slice_bytes(image_path, absolute_start_sector, partition.sector_count)
+                    slice_filesystems.append(
+                        probe_slice_filesystem(
+                            partition.index,
+                            partition.tag,
+                            partition.start_sector,
+                            absolute_start_sector,
+                            partition.sector_count,
+                            slice_image,
+                        )
+                    )
+
+    return DiskImageReport(
+        path=str(image_path),
+        file_size=file_size,
+        mbr=mbr,
+        active_unix_partition=active_unix_partition,
+        pdinfo=pdinfo,
+        vtoc=vtoc,
+        slice_filesystems=slice_filesystems,
+        notes=notes,
+    )
