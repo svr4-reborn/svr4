@@ -4,8 +4,8 @@ from pathlib import Path
 
 from .fsprobe import probe_slice_filesystem
 from .mbr import parse_mbr_sector
-from .structures import DiskImageReport, HDPDLOC, MbrInfo, PdInfo, SECTOR_SIZE, SliceFilesystem, UNIXWARE_PARTITION_TYPE, VtocInfo
-from .svr4 import is_valid_pdinfo, is_valid_vtoc, parse_pdinfo, parse_vtoc, partition_tag_name
+from .structures import AltInfo, DiskImageReport, HDPDLOC, MbrInfo, PdInfo, SECTOR_SIZE, SliceFilesystem, UNIXWARE_PARTITION_TYPE, VtocInfo, VtocPartition
+from .svr4 import is_valid_alt_info, is_valid_pdinfo, is_valid_vtoc, parse_alt_info, parse_pdinfo, parse_vtoc, partition_tag_name, remap_guest_visible_sector
 
 
 def find_active_unix_partition(mbr: MbrInfo):
@@ -37,12 +37,27 @@ def read_vtoc(image_path: Path, partition_start: int, pdinfo: PdInfo) -> VtocInf
     return parse_vtoc(block, offset=vtoc_offset)
 
 
+def read_alt_info(image_path: Path, partition_start: int, pdinfo: PdInfo) -> AltInfo | None:
+    if pdinfo.alt_len <= 0:
+        return None
+    alt_sector = partition_start + (pdinfo.alt_ptr // SECTOR_SIZE)
+    alt_offset = pdinfo.alt_ptr % SECTOR_SIZE
+    alt_span = max(pdinfo.alt_len, SECTOR_SIZE)
+    sector_count = max(1, (alt_offset + alt_span + SECTOR_SIZE - 1) // SECTOR_SIZE)
+    block = read_sector(image_path, alt_sector, sector_count=sector_count)
+    alt_info = parse_alt_info(block, offset=alt_offset)
+    if not is_valid_alt_info(alt_info):
+        return None
+    return alt_info
+
+
 def read_slice_bytes(image_path: Path, absolute_start_sector: int, sector_count: int) -> bytes:
     return read_sector(image_path, absolute_start_sector, sector_count=sector_count)
 
 
 def absolute_sector_for_slice(pdinfo: PdInfo, slice_start_sector: int) -> int:
-    return pdinfo.logical_sector_0 + slice_start_sector
+    _ = pdinfo
+    return slice_start_sector
 
 
 def inspect_slice_by_selector(image_path: Path, selector: str) -> tuple[DiskImageReport, SliceFilesystem]:
@@ -56,6 +71,30 @@ def inspect_slice_by_selector(image_path: Path, selector: str) -> tuple[DiskImag
             if partition.index == slice_info.slice_index and selector.strip().lower() == partition_tag_name(partition.tag):
                 return report, slice_info
     raise SystemExit(f'error: no slice matching {selector!r} was found')
+
+
+def get_vtoc_partition_by_selector(report: DiskImageReport, selector: str) -> VtocPartition:
+    if report.vtoc is None:
+        raise SystemExit('error: image does not contain a valid VTOC')
+    normalized = selector.strip().lower()
+    for partition in report.vtoc.partitions:
+        if str(partition.index) == normalized:
+            return partition
+    for partition in report.vtoc.partitions:
+        if partition_tag_name(partition.tag) == normalized:
+            return partition
+    raise SystemExit(f'error: no slice matching {selector!r} was found')
+
+
+def resolve_guest_visible_sector(image_path: Path, selector: str, slice_relative_sector: int) -> tuple[int, int, bytes]:
+    report = inspect_disk_image(image_path)
+    if report.active_unix_partition is None or report.pdinfo is None:
+        raise SystemExit('error: image does not contain a valid active UNIX partition')
+    partition = get_vtoc_partition_by_selector(report, selector)
+    absolute_sector = partition.start_sector + slice_relative_sector
+    alt_info = read_alt_info(image_path, report.active_unix_partition.start_lba, report.pdinfo)
+    guest_visible_sector = remap_guest_visible_sector(report.pdinfo, partition, alt_info, absolute_sector)
+    return absolute_sector, guest_visible_sector, read_sector(image_path, guest_visible_sector)
 
 
 def inspect_disk_image(image_path: Path) -> DiskImageReport:

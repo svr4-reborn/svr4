@@ -189,4 +189,4 @@ Useful interpretation:
 - If `main` hits but no text ever appeared on screen, the BIOS teletype path or later bootloader control flow is the next place to instrument.
 - The default synthetic boot build now compiles the bootloader with `DEBUG`, so the existing `debug(...)` calls in `boot.c`, `load.c`, and `disk.c` are active by default.
 - s5 replacement now also reclaims blocks when a replacement shrinks a file.
-- BFS and UFS support remains inspection-oriented; mutation support is currently s5 only.
+- BFS `/stand` and UFS root slices can now both be mounted through the host-side FUSE drivers for image population and inspection; s5 replacement remains the separate direct-edit path.

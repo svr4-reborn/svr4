@@ -10,3 +10,5 @@ mnt/
 
 __pycache__/
 *.egg-info/
+
+*.log

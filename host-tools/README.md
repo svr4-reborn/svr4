@@ -23,6 +23,7 @@ for a host-tool pipeline to call directly:
 
 ```sh
 svr4-disk-image inspect build/boot-media/att_unix_reference_install.raw
+svr4-bfs-mount build/boot-media/att_unix_reference_install.raw /tmp/svr4-stand --slice stand
 svr4-ufs-mount build/boot-media/att_unix_reference_install.raw /tmp/svr4-root --slice root
 ```
 
@@ -49,6 +50,8 @@ python3 host-tools/disk_image.py create-skeleton \
 	--slice 10:stand:32:32:0x200
 python3 host-tools/ufs_mount.py build/boot-media/att_unix_reference_install.raw /tmp/svr4-root \
 	--slice root
+python3 host-tools/bfs_mount.py build/boot-media/att_unix_reference_install.raw /tmp/svr4-stand \
+	--slice stand
 ```
 
 Current commands:
@@ -59,8 +62,11 @@ Current commands:
 
 FUSE entrypoint:
 
+- `bfs_mount.py`: mount a detected BFS slice from a raw disk image through `pyfuse3`. The mount path exposes the flat `/stand` namespace directly, supports regular-file mutation, and flushes changes back into the selected raw-image slice.
 - `ufs_mount.py`: mount a detected UFS slice from a raw disk image through `pyfuse3`. The mount path uses the writable UFS core directly, flushes changes back into the selected raw-image slice, runs with `direct_io`, and defaults the entry/attribute cache timeout to one second unless overridden with `--cache-timeout`.
 
 The filesystem logic under [host-tools/host_tools/fs/ufs.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/ufs.py), [host-tools/host_tools/fs/ufs_directory.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/ufs_directory.py), [host-tools/host_tools/fs/ufs_lowlevel.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/ufs_lowlevel.py), and [host-tools/host_tools/fs/ufs_backend.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/ufs_backend.py) remains the active path for writable UFS behavior.
+
+There is now an equivalent BFS path in [host-tools/host_tools/fs/bfs.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/bfs.py), [host-tools/host_tools/fs/bfs_backend.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/bfs_backend.py), and [host-tools/host_tools/fs/bfs_fuse.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/bfs_fuse.py). It keeps BFS flat, exposes only the root directory, and supports regular-file create, write, rename, unlink, and truncate semantics suitable for the `/stand` slice.
 
 There is now a thin backend wrapper for future FUSE work in [host-tools/host_tools/fs/ufs_backend.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/ufs_backend.py). It exposes filesystem-style operations such as `lookup`, `getattr`, `readdir`, `read`, `write`, `create`, `mkdir`, `unlink`, `rmdir`, `link`, `rename`, `symlink`, and `readlink` over an in-memory UFS image slice, and the concrete `pyfuse3` frontend lives in [host-tools/host_tools/fs/ufs_fuse.py](/home/alexander/projects/classic_unix_playing/svr4-src/host-tools/host_tools/fs/ufs_fuse.py).

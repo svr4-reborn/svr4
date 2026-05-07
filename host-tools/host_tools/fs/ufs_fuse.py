@@ -22,24 +22,29 @@ from host_tools.disk.inspect import inspect_slice_by_selector, read_slice_bytes
 from host_tools.fs.common import FilesystemCandidate, SECTOR_SIZE, UFS_ROOT_INODE, u32
 from host_tools.fs.ufs import UFS_FS_CSTOTAL_NBFREE_OFFSET
 from host_tools.fs.ufs import UFS_FS_CSTOTAL_NIFREE_OFFSET
+from host_tools.fs.ufs import iter_ufs_inode_directory_records
+from host_tools.fs.ufs import read_ufs_inode_range
+from host_tools.fs.ufs import read_ufs_path_range
+from host_tools.fs.ufs import apply_ufs_inode_truncate
+from host_tools.fs.ufs import apply_ufs_inode_write
 from host_tools.fs.ufs import apply_ufs_inode_replacement
 from host_tools.fs.ufs import create_ufs_file
 from host_tools.fs.ufs import detach_ufs_directory
 from host_tools.fs.ufs import detach_ufs_path
 from host_tools.fs.ufs import detect_ufs
 from host_tools.fs.ufs import finalize_ufs_unlinked_inode
-from host_tools.fs.ufs import iter_ufs_directory_records
 from host_tools.fs.ufs import link_ufs_path
 from host_tools.fs.ufs import make_ufs_directory
-from host_tools.fs.ufs import read_ufs_file
 from host_tools.fs.ufs import read_ufs_inode
-from host_tools.fs.ufs import read_ufs_path_bytes
+from host_tools.fs.ufs import ufs_allocation_byte_sizes
+from host_tools.fs.ufs import ufs_inode_data_blocks
 from host_tools.fs.ufs import remove_ufs_directory
 from host_tools.fs.ufs import rename_ufs_path
 from host_tools.fs.ufs import resolve_ufs_path
 from host_tools.fs.ufs import symlink_ufs_path
 from host_tools.fs.ufs import ufs_file_type
 from host_tools.fs.ufs import ufs_is_symlink
+from host_tools.fs.ufs import ufs_inode_pointer_blocks
 from host_tools.fs.ufs import unlink_ufs_path
 from host_tools.fs.ufs import write_ufs_inode_mode
 from host_tools.fs.ufs import write_ufs_inode_times
@@ -47,6 +52,68 @@ from host_tools.fs.ufs import write_ufs_inode_uid_gid
 
 
 log = logging.getLogger(__name__)
+
+
+class DirtyTrackingBytearray(bytearray):
+    def __new__(cls, initial: bytes | bytearray = b'') -> 'DirtyTrackingBytearray':
+        instance = super().__new__(cls, initial)
+        instance._dirty_ranges: list[tuple[int, int]] = []
+        return instance
+
+    def _record_dirty_range(self, start: int, end: int) -> None:
+        bounded_start = max(0, start)
+        bounded_end = min(len(self), end)
+        if bounded_start >= bounded_end:
+            return
+
+        merged_start = bounded_start
+        merged_end = bounded_end
+        merged_ranges: list[tuple[int, int]] = []
+        inserted = False
+        for existing_start, existing_end in self._dirty_ranges:
+            if existing_end < merged_start:
+                merged_ranges.append((existing_start, existing_end))
+                continue
+            if merged_end < existing_start:
+                if not inserted:
+                    merged_ranges.append((merged_start, merged_end))
+                    inserted = True
+                merged_ranges.append((existing_start, existing_end))
+                continue
+            merged_start = min(merged_start, existing_start)
+            merged_end = max(merged_end, existing_end)
+        if not inserted:
+            merged_ranges.append((merged_start, merged_end))
+        self._dirty_ranges = merged_ranges
+
+    def consume_dirty_ranges(self) -> list[tuple[int, int]]:
+        ranges = list(self._dirty_ranges)
+        self._dirty_ranges.clear()
+        return ranges
+
+    def dirty_ranges(self) -> list[tuple[int, int]]:
+        return list(self._dirty_ranges)
+
+    def __setitem__(self, key: int | slice, value: object) -> None:
+        if isinstance(key, slice):
+            start, stop, step = key.indices(len(self))
+            if step == 1:
+                dirty_start = start
+                dirty_end = stop
+            else:
+                positions = list(range(start, stop, step))
+                if positions:
+                    dirty_start = min(positions)
+                    dirty_end = max(positions) + 1
+                else:
+                    dirty_start = 0
+                    dirty_end = 0
+        else:
+            index = key if key >= 0 else len(self) + key
+            dirty_start = index
+            dirty_end = index + 1
+        super().__setitem__(key, value)
+        self._record_dirty_range(dirty_start, dirty_end)
 
 
 def init_logging(debug: bool = False) -> None:
@@ -128,8 +195,12 @@ class UFSVolume:
     image: bytearray
     filesystem: FilesystemCandidate
     sector_count: int
-    flush_callback: Callable[[bytearray], None] | None = None
+    flush_callback: Callable[[bytearray, Sequence[tuple[int, int]], bool], None] | None = None
     close_callback: Callable[[], None] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.image, DirtyTrackingBytearray):
+            self.image = DirtyTrackingBytearray(self.image)
 
     @classmethod
     def open_raw_image(cls, image_path: Path, slice_selector: str) -> 'UFSVolume':
@@ -138,7 +209,7 @@ class UFSVolume:
         if slice_info.filesystem != 'ufs':
             raise SystemExit(f'error: slice {slice_selector!r} is not a UFS filesystem')
 
-        slice_image = bytearray(read_slice_bytes(resolved_path, slice_info.absolute_start_sector, slice_info.sector_count))
+        slice_image = DirtyTrackingBytearray(read_slice_bytes(resolved_path, slice_info.absolute_start_sector, slice_info.sector_count))
         candidates = detect_ufs(bytes(slice_image))
         if not candidates:
             raise SystemExit(f'error: failed to detect a UFS filesystem inside slice {slice_selector!r}')
@@ -152,11 +223,14 @@ class UFSVolume:
         handle = resolved_path.open('r+b')
         disk_offset = slice_info.absolute_start_sector * SECTOR_SIZE
 
-        def flush_callback(data: bytearray) -> None:
-            handle.seek(disk_offset)
-            handle.write(data)
-            handle.flush()
-            os.fsync(handle.fileno())
+        def flush_callback(data: bytearray, dirty_ranges: Sequence[tuple[int, int]], sync: bool) -> None:
+            if dirty_ranges:
+                for start, end in dirty_ranges:
+                    handle.seek(disk_offset + start)
+                    handle.write(data[start:end])
+                handle.flush()
+            if sync:
+                os.fsync(handle.fileno())
 
         return cls(
             image=slice_image,
@@ -166,11 +240,14 @@ class UFSVolume:
             close_callback=handle.close,
         )
 
-    def flush(self) -> None:
+    def flush(self, sync: bool = True) -> None:
         if self.flush_callback is not None:
-            self.flush_callback(self.image)
+            dirty_ranges = self.image.consume_dirty_ranges() if isinstance(self.image, DirtyTrackingBytearray) else []
+            if dirty_ranges or sync:
+                self.flush_callback(self.image, dirty_ranges, sync)
 
     def close(self) -> None:
+        self.flush(sync=True)
         if self.close_callback is not None:
             self.close_callback()
             self.close_callback = None
@@ -179,6 +256,11 @@ class UFSVolume:
 @dataclass
 class OpenHandle:
     inode: InodeT
+    dirty: bool = False
+    inode_data: dict[str, int | list[int]] | None = None
+    data_blocks: list[int] | None = None
+    allocation_sizes: list[int] | None = None
+    pointer_blocks: list[int] | None = None
 
 
 @dataclass
@@ -188,7 +270,7 @@ class PendingDeletion:
 
 class UFSOperations(pyfuse3.Operations):
     supports_dot_lookup = True
-    enable_writeback_cache = False
+    enable_writeback_cache = True
 
     def __init__(self, volume: UFSVolume, slow_op_ms: float = 0.0, cache_timeout: float = 1.0) -> None:
         super().__init__()
@@ -321,31 +403,61 @@ class UFSOperations(pyfuse3.Operations):
         ufs_inode, inode_data = self._inode_state(inode)
         return self._entry_from_inode(ufs_inode, inode_data)
 
-    def _flush(self) -> None:
-        self._volume.flush()
+    def _flush(self, sync: bool = True) -> None:
+        self._volume.flush(sync=sync)
 
-    def _inode_bytes(self, inode: InodeT) -> tuple[int, dict[str, int | list[int]], bytes]:
-        ufs_inode, inode_data = self._inode_state(inode)
-        data = read_ufs_file(self._volume.image, self._volume.filesystem.start_offset, self._volume.filesystem.details, inode_data)
-        return ufs_inode, inode_data, data
+    def _clear_dirty_handles(self) -> None:
+        for handle in self._open_handles.values():
+            handle.dirty = False
 
-    def _write_data(self, inode: InodeT, offset: int, data: bytes) -> None:
-        ufs_inode, inode_data, current = self._inode_bytes(inode)
-        if offset > len(current):
-            current = current + (b'\0' * (offset - len(current)))
-        updated = current[:offset] + data
-        tail_offset = offset + len(data)
-        if tail_offset < len(current):
-            updated += current[tail_offset:]
-        apply_ufs_inode_replacement(self._volume.image, self._volume.filesystem, ufs_inode, inode_data, updated)
+    def _invalidate_inode_cache(self, inode: InodeT) -> None:
+        for handle in self._open_handles.values():
+            if handle.inode != inode:
+                continue
+            handle.inode_data = None
+            handle.data_blocks = None
+            handle.allocation_sizes = None
+            handle.pointer_blocks = None
+
+    def _write_data(self, handle: OpenHandle, offset: int, data: bytes) -> None:
+        if handle.inode_data is None:
+            ufs_inode, inode_data = self._inode_state(handle.inode)
+            handle.inode_data = dict(inode_data)
+        else:
+            ufs_inode = self._ufs_inode_number(handle.inode)
+        inode_data = handle.inode_data
+        if handle.data_blocks is None:
+            handle.data_blocks = ufs_inode_data_blocks(self._volume.image, self._volume.filesystem, inode_data)
+        if handle.allocation_sizes is None:
+            handle.allocation_sizes = ufs_allocation_byte_sizes(self._volume.filesystem.details, int(inode_data['size']))
+        result = apply_ufs_inode_write(
+            self._volume.image,
+            self._volume.filesystem,
+            ufs_inode,
+            inode_data,
+            offset,
+            data,
+            current_data_blocks=handle.data_blocks,
+            current_allocation_sizes=handle.allocation_sizes,
+            current_pointer_blocks=handle.pointer_blocks,
+        )
+        inode_data['size'] = int(result['new_size'])
+        data_blocks_state = result.get('data_blocks_state')
+        allocation_sizes_state = result.get('allocation_sizes_state')
+        pointer_blocks_state = result.get('pointer_blocks_state')
+        if isinstance(data_blocks_state, list):
+            handle.data_blocks = list(data_blocks_state)
+        if isinstance(allocation_sizes_state, list):
+            handle.allocation_sizes = list(allocation_sizes_state)
+        if isinstance(pointer_blocks_state, list):
+            handle.pointer_blocks = list(pointer_blocks_state)
+        elif pointer_blocks_state is None and handle.pointer_blocks is None and handle.data_blocks is not None and len(handle.data_blocks) <= 12:
+            handle.pointer_blocks = []
 
     def _truncate(self, inode: InodeT, size: int) -> None:
-        ufs_inode, inode_data, current = self._inode_bytes(inode)
-        if size < len(current):
-            updated = current[:size]
-        else:
-            updated = current + (b'\0' * (size - len(current)))
-        apply_ufs_inode_replacement(self._volume.image, self._volume.filesystem, ufs_inode, inode_data, updated)
+        ufs_inode, inode_data = self._inode_state(inode)
+        apply_ufs_inode_truncate(self._volume.image, self._volume.filesystem, ufs_inode, inode_data, size)
+        self._invalidate_inode_cache(inode)
 
     def _inode_open_count(self, inode: InodeT) -> int:
         count = 0
@@ -417,7 +529,7 @@ class UFSOperations(pyfuse3.Operations):
         async with self._lock:
             try:
                 path = self._path_for_inode(inode)
-                _, child_inode, data = read_ufs_path_bytes(self._volume.image, self._volume.filesystem, path)
+                _, child_inode, data = read_ufs_path_range(self._volume.image, self._volume.filesystem, path)
                 if not ufs_is_symlink(child_inode):
                     raise FUSEError(errno.EINVAL)
                 return data
@@ -440,8 +552,8 @@ class UFSOperations(pyfuse3.Operations):
             try:
                 inode = self._directory_handles[fh]
                 parent_path = self._path_for_inode(inode)
-                _, directory_inode, directory_bytes = self._inode_bytes(inode)
-                for record in iter_ufs_directory_records(directory_bytes, int(directory_inode['size'])):
+                _, directory_inode = self._inode_state(inode)
+                for record in iter_ufs_inode_directory_records(self._volume.image, self._volume.filesystem, directory_inode):
                     if record.inode == 0:
                         continue
                     next_id = record.offset + 1
@@ -480,7 +592,6 @@ class UFSOperations(pyfuse3.Operations):
             handle = self._new_handle()
             self._open_handles[handle] = OpenHandle(inode=inode)
             info = FileInfo(fh=handle)
-            info.direct_io = True
             info.keep_cache = True
             return info
 
@@ -488,20 +599,21 @@ class UFSOperations(pyfuse3.Operations):
         async with self._lock:
             try:
                 inode = self._open_handles[fh].inode
-                _, _, data = self._inode_bytes(inode)
-                return data[off:off + size]
+                _, inode_data = self._inode_state(inode)
+                return read_ufs_inode_range(self._volume.image, self._volume.filesystem, inode_data, off, size)
             except BaseException as error:
                 raise _translate_ufs_error(error) from error
 
     async def write(self, fh: FileHandleT, off: int, buf: bytes) -> int:
         async with self._lock:
             try:
-                inode = self._open_handles[fh].inode
-                self._write_data(inode, off, buf)
+                handle = self._open_handles[fh]
+                self._write_data(handle, off, buf)
+                inode = handle.inode
                 now = int(time.time())
                 ufs_inode = self._ufs_inode_number(inode)
                 write_ufs_inode_times(self._volume.image, self._volume.filesystem, ufs_inode, mtime=now, ctime=now)
-                self._flush()
+                handle.dirty = True
                 return len(buf)
             except BaseException as error:
                 raise _translate_ufs_error(error) from error
@@ -509,17 +621,21 @@ class UFSOperations(pyfuse3.Operations):
     async def release(self, fh: FileHandleT) -> None:
         handle = self._open_handles.pop(fh, None)
         if handle is not None:
+            if handle.dirty:
+                self._flush(sync=True)
             self._maybe_finalize_pending_inode(handle.inode)
 
     async def flush(self, fh: FileHandleT) -> None:
         del fh
         async with self._lock:
             self._flush()
+            self._clear_dirty_handles()
 
     async def fsync(self, fh: FileHandleT, datasync: bool) -> None:
         del fh, datasync
         async with self._lock:
             self._flush()
+            self._clear_dirty_handles()
 
     async def fsyncdir(self, fh: FileHandleT, datasync: bool) -> None:
         del fh, datasync
@@ -553,7 +669,6 @@ class UFSOperations(pyfuse3.Operations):
                 handle = self._new_handle()
                 self._open_handles[handle] = OpenHandle(inode=inode)
                 info = FileInfo(fh=handle)
-                info.direct_io = True
                 info.keep_cache = True
                 return info, entry
             except BaseException as error:

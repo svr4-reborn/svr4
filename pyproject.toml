@@ -15,7 +15,10 @@ fuse = ["pyfuse3>=3,<4"]
 
 [project.scripts]
 svr4-disk-image = "host_tools.disk.cli:main"
+svr4-bfs-mount = "host_tools.fs.bfs_fuse:main"
 svr4-ufs-mount = "host_tools.fs.ufs_fuse:main"
+svr4-ufs-fsck = "host_tools.fs.ufs_fsck:main"
+svr4-ufs-fsck-original = "host_tools.fs.ufs_fsck_original:main"
 
 [tool.setuptools]
 package-dir = {"" = "host-tools"}

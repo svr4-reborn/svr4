@@ -9,19 +9,111 @@ from unittest import mock
 import pyfuse3
 import trio
 
+from host_tools.fs.common import UFS_NDADDR
+from host_tools.fs.ufs import read_ufs_inode
+from host_tools.fs.ufs import read_ufs_pointer_block
+from host_tools.fs.ufs import resolve_ufs_path
+from host_tools.fs.ufs import ufs_allocation_byte_sizes
+from host_tools.fs.ufs import ufs_cgbase
+from host_tools.fs.ufs import ufs_cgdmin
+from host_tools.fs.ufs import ufs_inode_data_blocks
 from host_tools.fs.ufs_fuse import UFSOperations, UFSVolume, make_test_context
-from test_ufs_namespace import build_test_filesystem
+from test_ufs_namespace import build_multicg_test_filesystem_with_pristine_second_group, build_test_filesystem
+
+
+def _assert_matches_original_fsck_inode_rules(
+    testcase: unittest.TestCase,
+    image: bytes | bytearray,
+    filesystem: object,
+    inode_number: int,
+) -> None:
+    inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, inode_number)
+    testcase.assertIsNotNone(inode)
+    assert inode is not None
+
+    fs = filesystem.details
+    block_size = int(fs['bsize'])
+    fragment_size = int(fs['fsize'])
+    fragments_per_block = int(fs['frag'])
+    indirect_count = int(fs['nindir'])
+    needed_blocks = 0 if int(inode['size']) == 0 else (int(inode['size']) + block_size - 1) // block_size
+    data_blocks = ufs_inode_data_blocks(image, filesystem, inode)
+    allocation_sizes = ufs_allocation_byte_sizes(fs, int(inode['size']))
+    direct_blocks = [int(block) for block in inode['direct_blocks']]
+    indirect_roots = [int(block) for block in inode['indirect_blocks']]
+    fs_size = int(fs.get('size', fs.get('dsize', int(fs['fpg']) * int(fs['ncg']))))
+
+    def dtog(block_number: int) -> int:
+        return block_number // int(fs['fpg'])
+
+    def outrange(block_number: int, fragment_count: int) -> bool:
+        if block_number + fragment_count > fs_size:
+            return True
+        cylinder_group = dtog(block_number)
+        if block_number < ufs_cgdmin(fs, cylinder_group):
+            return (block_number + fragment_count) > ufs_cgbase(fs, cylinder_group)
+        return (block_number + fragment_count) > ufs_cgbase(fs, cylinder_group + 1)
+
+    for index, block_number in enumerate(data_blocks):
+        testcase.assertFalse(
+            outrange(block_number, allocation_sizes[index] // fragment_size),
+            msg=f'data block {block_number} is out of range for inode {inode_number}',
+        )
+
+    for index in range(min(needed_blocks, UFS_NDADDR), UFS_NDADDR):
+        testcase.assertEqual(direct_blocks[index], 0, msg=f'unexpected direct pointer {index} in inode {inode_number}')
+
+    remaining_blocks = needed_blocks - UFS_NDADDR
+    roots_needed = 0
+    while remaining_blocks > 0:
+        roots_needed += 1
+        remaining_blocks //= indirect_count
+    for index in range(roots_needed, len(indirect_roots)):
+        testcase.assertEqual(indirect_roots[index], 0, msg=f'unexpected indirect root {index} in inode {inode_number}')
+
+    flattened_indirect_data: list[int] = []
+
+    def validate_indirect(root_block: int, level: int, size_remaining: int, label: str) -> None:
+        testcase.assertFalse(
+            outrange(root_block, fragments_per_block),
+            msg=f'indirect block {root_block} ({label}) is out of range for inode {inode_number}',
+        )
+        pointers = read_ufs_pointer_block(image, filesystem, root_block)
+        size_per_pointer = block_size
+        for _ in range(level - 1):
+            size_per_pointer *= indirect_count
+        pointers_needed = min(indirect_count, max(0, (size_remaining // size_per_pointer) + 1))
+        for pointer in pointers[pointers_needed:]:
+            testcase.assertEqual(pointer, 0, msg=f'nonzero trailing indirect pointer in {label} for inode {inode_number}')
+        for index, pointer in enumerate(pointers[:pointers_needed], start=1):
+            if pointer == 0:
+                continue
+            if level > 1:
+                validate_indirect(int(pointer), level - 1, size_remaining - (index * size_per_pointer), f'{label}.{index}')
+            else:
+                flattened_indirect_data.append(int(pointer))
+
+    indirect_size_remaining = int(inode['size']) - (UFS_NDADDR * block_size)
+    for level, root_block in enumerate(indirect_roots, start=1):
+        if root_block == 0:
+            continue
+        validate_indirect(root_block, level, indirect_size_remaining, f'ib{level}')
+
+    testcase.assertEqual(flattened_indirect_data, data_blocks[UFS_NDADDR:])
 
 
 class UFSFuseFrontendTests(unittest.TestCase):
-    def build_operations(self) -> tuple[UFSOperations, list[bytes]]:
-        image, filesystem = build_test_filesystem()
-        flushes: list[bytes] = []
+    def build_operations(self) -> tuple[UFSOperations, list[tuple[list[tuple[int, int]], bool]]]:
+        return self.build_operations_with_fixture(build_test_filesystem)
+
+    def build_operations_with_fixture(self, builder: object) -> tuple[UFSOperations, list[tuple[list[tuple[int, int]], bool]]]:
+        image, filesystem = builder()
+        flushes: list[tuple[list[tuple[int, int]], bool]] = []
         volume = UFSVolume(
             image=image,
             filesystem=filesystem,
             sector_count=len(image) // 512,
-            flush_callback=lambda data: flushes.append(data),
+            flush_callback=lambda data, ranges, sync: flushes.append((list(ranges), sync)),
         )
         return UFSOperations(volume), flushes
 
@@ -36,7 +128,7 @@ class UFSFuseFrontendTests(unittest.TestCase):
 
             bytes_written = await operations.write(file_info.fh, 0, b'hello world')
             self.assertEqual(bytes_written, 11)
-            self.assertGreaterEqual(len(flushes), 2)
+            self.assertEqual(len(flushes), 1)
 
             data = await operations.read(file_info.fh, 0, 32)
             self.assertEqual(data, b'hello world')
@@ -72,6 +164,142 @@ class UFSFuseFrontendTests(unittest.TestCase):
 
             truncated = await operations.read(file_info.fh, 0, 32)
             self.assertEqual(truncated, b'hello')
+            await operations.release(file_info.fh)
+            self.assertGreaterEqual(len(flushes), 2)
+
+        trio.run(scenario)
+
+    def test_multiple_writes_flush_on_release_not_each_write(self) -> None:
+        async def scenario() -> None:
+            operations, flushes = self.build_operations()
+            ctx = make_test_context(uid=1000, gid=100, umask=0o022)
+
+            file_info, _ = await operations.create(pyfuse3.ROOT_INODE, b'batched.bin', 0o666, os.O_RDWR, ctx)
+            baseline_flushes = len(flushes)
+
+            self.assertEqual(await operations.write(file_info.fh, 0, b'A' * 4096), 4096)
+            self.assertEqual(await operations.write(file_info.fh, 4096, b'B' * 4096), 4096)
+            self.assertEqual(len(flushes), baseline_flushes)
+
+            await operations.release(file_info.fh)
+            self.assertEqual(len(flushes), baseline_flushes + 1)
+            self.assertTrue(flushes[-1][1])
+
+        trio.run(scenario)
+
+    def test_flush_writes_dirty_ranges_not_whole_slice(self) -> None:
+        async def scenario() -> None:
+            operations, flushes = self.build_operations()
+            ctx = make_test_context(uid=1000, gid=100, umask=0o022)
+
+            file_info, _ = await operations.create(pyfuse3.ROOT_INODE, b'ranged.bin', 0o666, os.O_RDWR, ctx)
+            await operations.write(file_info.fh, 0, b'payload')
+            await operations.release(file_info.fh)
+
+            ranges, sync = flushes[-1]
+            self.assertTrue(sync)
+            self.assertTrue(ranges)
+            total_dirty = sum(end - start for start, end in ranges)
+            self.assertLess(total_dirty, len(operations._volume.image))
+
+        trio.run(scenario)
+
+    def test_block_aligned_append_avoids_full_replacement(self) -> None:
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=1000, gid=100, umask=0o022)
+
+            file_info, created = await operations.create(pyfuse3.ROOT_INODE, b'append.bin', 0o666, os.O_RDWR, ctx)
+            first_block = b'A' * 4096
+            second_block = b'B' * 4096
+
+            with mock.patch('host_tools.fs.ufs_fuse.apply_ufs_inode_replacement', side_effect=AssertionError('unexpected full replacement')):
+                self.assertEqual(await operations.write(file_info.fh, 0, first_block), len(first_block))
+                self.assertEqual(await operations.write(file_info.fh, len(first_block), second_block), len(second_block))
+
+            inode = pyfuse3.InodeT(created.st_ino)
+            looked_up = await operations.getattr(inode)
+            self.assertEqual(looked_up.st_size, 8192)
+            self.assertEqual(await operations.read(file_info.fh, 0, 8192), first_block + second_block)
+            await operations.release(file_info.fh)
+
+        trio.run(scenario)
+
+    def test_fragment_growth_and_truncate_avoid_full_file_reads(self) -> None:
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=1000, gid=100, umask=0o022)
+
+            file_info, created = await operations.create(pyfuse3.ROOT_INODE, b'fragment.bin', 0o666, os.O_RDWR, ctx)
+            initial_payload = b'C' * 3000
+            grown_payload = b'D' * 2000
+
+            self.assertEqual(await operations.write(file_info.fh, 0, initial_payload), len(initial_payload))
+
+            with mock.patch('host_tools.fs.ufs.read_ufs_file', side_effect=AssertionError('unexpected whole-file read')):
+                self.assertEqual(await operations.write(file_info.fh, len(initial_payload), grown_payload), len(grown_payload))
+
+                attrs = pyfuse3.EntryAttributes()
+                attrs.st_size = 2048
+                attrs.st_mode = 0
+                attrs.st_uid = 0
+                attrs.st_gid = 0
+                attrs.st_atime_ns = 0
+                attrs.st_mtime_ns = 0
+                attrs.st_ctime_ns = 0
+                fields = type(
+                    'Fields',
+                    (),
+                    {
+                        'update_size': True,
+                        'update_mode': False,
+                        'update_uid': False,
+                        'update_gid': False,
+                        'update_atime': False,
+                        'update_mtime': False,
+                        'update_ctime': False,
+                    },
+                )()
+                shrunk = await operations.setattr(pyfuse3.InodeT(created.st_ino), attrs, fields, None, ctx)
+
+            self.assertEqual(shrunk.st_size, 2048)
+            self.assertEqual(await operations.read(file_info.fh, 0, 4096), initial_payload[:2048])
+            await operations.release(file_info.fh)
+
+        trio.run(scenario)
+
+    def test_large_indirect_file_matches_original_fsck_rules(self) -> None:
+        async def scenario() -> None:
+            operations, _ = self.build_operations_with_fixture(build_multicg_test_filesystem_with_pristine_second_group)
+            ctx = make_test_context(uid=1000, gid=100, umask=0o022)
+
+            file_info, _ = await operations.create(pyfuse3.ROOT_INODE, b'fsck-large.bin', 0o666, os.O_RDWR, ctx)
+            payload = (b'0123456789ABCDEF' * 3328) + (b'XYZ' * 512)
+
+            self.assertEqual(await operations.write(file_info.fh, 0, payload), len(payload))
+            await operations.release(file_info.fh)
+
+            resolved = resolve_ufs_path(bytes(operations._volume.image), operations._volume.filesystem, '/fsck-large.bin')
+            self.assertIsNotNone(resolved)
+            assert resolved is not None
+            inode_number, _ = resolved
+            _assert_matches_original_fsck_inode_rules(self, operations._volume.image, operations._volume.filesystem, inode_number)
+
+        trio.run(scenario)
+
+    def test_regular_file_read_avoids_full_file_materialization(self) -> None:
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=1000, gid=100, umask=0o022)
+
+            file_info, _ = await operations.create(pyfuse3.ROOT_INODE, b'read.bin', 0o666, os.O_RDWR, ctx)
+            payload = (b'0123456789ABCDEF' * 512)
+            self.assertEqual(await operations.write(file_info.fh, 0, payload), len(payload))
+
+            with mock.patch('host_tools.fs.ufs.read_ufs_file', side_effect=AssertionError('unexpected whole-file read')):
+                chunk = await operations.read(file_info.fh, 128, 64)
+
+            self.assertEqual(chunk, payload[128:192])
             await operations.release(file_info.fh)
 
         trio.run(scenario)

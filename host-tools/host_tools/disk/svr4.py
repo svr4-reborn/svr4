@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from .structures import HDPDLOC, PdInfo, VTOC_SANE, VALID_PD, VtocInfo, VtocPartition
+from .structures import AltInfo, AltTableInfo, HDPDLOC, PdInfo, VTOC_SANE, VALID_PD, VtocInfo, VtocPartition
 
 
 VTOC_PARTITION_COUNT = 16
 PARTITION_STRUCT_OFFSET = 60
 PARTITION_STRUCT_SIZE = 12
+ALT_SANITY = 0xDEADBEEF
+ALT_VERSION = 0x02
+V_BACKUP = 0x05
+V_OTHER = 0x07
 
 PARTITION_TAG_NAMES = {
     0x01: 'boot',
@@ -71,9 +75,74 @@ def parse_vtoc(raw: bytes, offset: int = 0) -> VtocInfo:
         partition_count=int.from_bytes(view[16:18], 'little', signed=False),
         partitions=partitions,
     )
+
+
+def _parse_alt_table(raw: bytes, offset: int, entry_count: int) -> tuple[AltTableInfo, int]:
+    end_offset = offset + 8 + (entry_count * 4)
+    if len(raw) < end_offset:
+        raise ValueError('alternates table is truncated')
+    table = AltTableInfo(
+        used=int.from_bytes(raw[offset:offset + 2], 'little', signed=False),
+        reserved=entry_count,
+        base_sector=int.from_bytes(raw[offset + 4:offset + 8], 'little', signed=True),
+        bad_entries=[
+            int.from_bytes(raw[entry_offset:entry_offset + 4], 'little', signed=True)
+            for entry_offset in range(offset + 8, end_offset, 4)
+        ],
+    )
+    return table, end_offset
+
+
+def parse_alt_info(raw: bytes, offset: int = 0) -> AltInfo:
+    view = raw[offset:]
+    if len(view) < 16:
+        raise ValueError('alternates table is too small')
+    sanity = int.from_bytes(view[0:4], 'little', signed=False)
+    version = int.from_bytes(view[4:6], 'little', signed=False)
+    track_reserved = int.from_bytes(view[10:12], 'little', signed=False)
+    track_table, next_offset = _parse_alt_table(view, 8, track_reserved)
+    if len(view) < next_offset + 4:
+        raise ValueError('alternates table is missing sector metadata')
+    sector_reserved = int.from_bytes(view[next_offset + 2:next_offset + 4], 'little', signed=False)
+    sector_table, _ = _parse_alt_table(view, next_offset, sector_reserved)
+    return AltInfo(
+        sanity=sanity,
+        version=version,
+        track_table=track_table,
+        sector_table=sector_table,
+    )
+
+
+def remap_guest_visible_sector(pdinfo: PdInfo, partition: VtocPartition, alt_info: AltInfo | None, absolute_sector: int) -> int:
+    if alt_info is None:
+        return absolute_sector
+    if partition.index == 0 or partition.tag in {V_BACKUP, V_OTHER}:
+        return absolute_sector
+    if pdinfo.sectors <= 0:
+        raise ValueError('pdinfo.sectors must be positive')
+
+    remapped_sector = absolute_sector
+    track_number = remapped_sector // pdinfo.sectors
+    for index, bad_track in enumerate(alt_info.track_table.bad_entries[:alt_info.track_table.used]):
+        if track_number == bad_track:
+            remapped_sector = alt_info.track_table.base_sector + (index * pdinfo.sectors) + (remapped_sector % pdinfo.sectors)
+            break
+
+    for index, bad_sector in enumerate(alt_info.sector_table.bad_entries[:alt_info.sector_table.used]):
+        if remapped_sector == bad_sector:
+            remapped_sector = alt_info.sector_table.base_sector + index
+            break
+
+    return remapped_sector
+
+
 def is_valid_pdinfo(pdinfo: PdInfo) -> bool:
     return pdinfo.sanity == VALID_PD
 
 
 def is_valid_vtoc(vtoc: VtocInfo) -> bool:
     return vtoc.sanity == VTOC_SANE
+
+
+def is_valid_alt_info(alt_info: AltInfo) -> bool:
+    return alt_info.sanity == ALT_SANITY and alt_info.version == ALT_VERSION

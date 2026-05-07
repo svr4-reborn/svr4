@@ -8,7 +8,7 @@ from .ufs import create_ufs_file
 from .ufs import iter_ufs_directory_entries
 from .ufs import link_ufs_path
 from .ufs import make_ufs_directory
-from .ufs import read_ufs_path_bytes
+from .ufs import read_ufs_path_range
 from .ufs import remove_ufs_directory
 from .ufs import rename_ufs_path
 from .ufs import resolve_ufs_path
@@ -44,8 +44,8 @@ class UFSBackend:
         _, inode = self.lookup(path)
         return iter_ufs_directory_entries(self.image, self.filesystem, inode)
 
-    def read(self, path: str) -> bytes:
-        return read_ufs_path_bytes(self.image, self.filesystem, path)[2]
+    def read(self, path: str, offset: int = 0, size: int | None = None) -> bytes:
+        return read_ufs_path_range(self.image, self.filesystem, path, offset=offset, size=size)[2]
 
     def write(self, path: str, data: bytes) -> dict[str, int | str]:
         return apply_ufs_replacement(self.image, self.filesystem, path, data)
@@ -72,7 +72,7 @@ class UFSBackend:
         return symlink_ufs_path(self.image, self.filesystem, target, link_path)
 
     def readlink(self, path: str) -> str:
-        _, inode, data = read_ufs_path_bytes(self.image, self.filesystem, path)
+        _, inode, data = read_ufs_path_range(self.image, self.filesystem, path)
         if not ufs_is_symlink(inode):
             raise SystemExit(f'error: {path} is not a UFS symbolic link')
         return data.decode('ascii')

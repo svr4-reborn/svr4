@@ -1,0 +1,8 @@
+#ifndef HOST_TOOLS_ORIGINAL_UFS_FSCK_COMPAT_SYS_VNODE_H
+#define HOST_TOOLS_ORIGINAL_UFS_FSCK_COMPAT_SYS_VNODE_H
+
+struct vnode {
+    int unused;
+};
+
+#endif

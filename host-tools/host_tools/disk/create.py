@@ -31,8 +31,13 @@ def validate_unix_partition(total_sectors: int, unix_partition_start: int, unix_
         raise SystemExit('error: UNIX partition exceeds the declared disk geometry')
 
 
-def validate_vtoc_partitions(unix_partition_size: int, partitions: list[VtocPartition]) -> None:
+def validate_vtoc_partitions(
+    unix_partition_start: int,
+    unix_partition_size: int,
+    partitions: list[VtocPartition],
+) -> None:
     seen_indexes: set[int] = set()
+    unix_partition_end = unix_partition_start + unix_partition_size
     for partition in partitions:
         if partition.index < 0 or partition.index >= 16:
             raise SystemExit(f'error: slice index {partition.index} is outside the supported VTOC range 0..15')
@@ -43,7 +48,9 @@ def validate_vtoc_partitions(unix_partition_size: int, partitions: list[VtocPart
             raise SystemExit(f'error: slice {partition.index} has a negative start sector')
         if partition.sector_count < 0:
             raise SystemExit(f'error: slice {partition.index} has a negative size')
-        if partition.start_sector + partition.sector_count > unix_partition_size:
+        if partition.start_sector < unix_partition_start:
+            raise SystemExit(f'error: slice {partition.index} starts before the UNIX partition')
+        if partition.start_sector + partition.sector_count > unix_partition_end:
             raise SystemExit(f'error: slice {partition.index} exceeds the UNIX partition bounds')
 
 
@@ -133,7 +140,7 @@ def create_raw_image_skeleton(
 ) -> None:
     validate_geometry(geometry)
     validate_unix_partition(geometry.total_sectors, unix_partition_start, unix_partition_size)
-    validate_vtoc_partitions(unix_partition_size, slices)
+    validate_vtoc_partitions(unix_partition_start, unix_partition_size, slices)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image = bytearray(geometry.total_sectors * SECTOR_SIZE)

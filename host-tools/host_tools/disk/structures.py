@@ -45,6 +45,22 @@ class PdInfo:
 
 
 @dataclass(frozen=True)
+class AltTableInfo:
+    used: int
+    reserved: int
+    base_sector: int
+    bad_entries: list[int]
+
+
+@dataclass(frozen=True)
+class AltInfo:
+    sanity: int
+    version: int
+    track_table: AltTableInfo
+    sector_table: AltTableInfo
+
+
+@dataclass(frozen=True)
 class VtocPartition:
     index: int
     tag: int

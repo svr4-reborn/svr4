@@ -13,20 +13,104 @@ import trio
 from host_tools.disk.cli import format_bfs_path
 from host_tools.disk.create import RawDiskGeometry, create_raw_image_skeleton
 from host_tools.disk.fsprobe import select_slice_filesystem
-from host_tools.disk.inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes
-from host_tools.disk.structures import VtocPartition
-from host_tools.fs.common import BFS_MAGIC
-from host_tools.fs.ufs import read_ufs_path_bytes
+from host_tools.disk.inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes, resolve_guest_visible_sector
+from host_tools.disk.structures import AltInfo, AltTableInfo, PdInfo, VtocPartition
+from host_tools.disk.svr4 import ALT_SANITY, ALT_VERSION, is_valid_alt_info, parse_alt_info, remap_guest_visible_sector
+from host_tools.fs.bfs import read_bfs_path_bytes
+from host_tools.fs.bfs_fuse import BFSOperations, BFSVolume, make_test_context as make_bfs_test_context
+from host_tools.fs.common import BFS_MAGIC, UFS_DINODE_SIZE
+from host_tools.fs.ufs import build_ufs_directory_block, read_ufs_path_bytes
 from host_tools.fs.common import UFS_FS_BSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_MAGIC, UFS_SB_OFFSET
+from host_tools.fs.ufs import UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NINDIR_OFFSET
 from host_tools.fs.ufs_fuse import UFSOperations, UFSVolume, make_test_context
+from host_tools.fs.ufs_lowlevel import detect_ufs as detect_ufs_lowlevel, read_ufs_file as read_ufs_file_lowlevel, read_ufs_inode as read_ufs_inode_lowlevel, ufs_inode_offset as ufs_inode_offset_lowlevel
 from test_ufs_namespace import build_test_filesystem
 
 
 class DiskLayoutTests(unittest.TestCase):
+    def test_parse_alt_info_and_remap_guest_sector(self) -> None:
+        raw = bytearray()
+        raw.extend(ALT_SANITY.to_bytes(4, 'little'))
+        raw.extend(ALT_VERSION.to_bytes(2, 'little'))
+        raw.extend((0).to_bytes(2, 'little'))
+        raw.extend((1).to_bytes(2, 'little'))
+        raw.extend((2).to_bytes(2, 'little'))
+        raw.extend((1000).to_bytes(4, 'little', signed=True))
+        raw.extend((25).to_bytes(4, 'little', signed=True))
+        raw.extend((-1).to_bytes(4, 'little', signed=True))
+        raw.extend((1).to_bytes(2, 'little'))
+        raw.extend((2).to_bytes(2, 'little'))
+        raw.extend((2000).to_bytes(4, 'little', signed=True))
+        raw.extend((1003).to_bytes(4, 'little', signed=True))
+        raw.extend((-1).to_bytes(4, 'little', signed=True))
+
+        alt_info = parse_alt_info(bytes(raw))
+
+        self.assertTrue(is_valid_alt_info(alt_info))
+        self.assertEqual(alt_info.track_table.bad_entries[:alt_info.track_table.used], [25])
+        self.assertEqual(alt_info.sector_table.bad_entries[:alt_info.sector_table.used], [1003])
+
+        pdinfo = PdInfo(
+            drive_id=0,
+            sanity=0,
+            version=0,
+            serial='',
+            cylinders=0,
+            tracks=0,
+            sectors=17,
+            bytes_per_sector=512,
+            logical_sector_0=0,
+            vtoc_ptr=0,
+            vtoc_len=0,
+            alt_ptr=0,
+            alt_len=0,
+        )
+        partition = VtocPartition(index=1, tag=0x02, flag=0, start_sector=0, sector_count=0)
+        backup_partition = VtocPartition(index=0, tag=0x05, flag=0, start_sector=0, sector_count=0)
+        other_partition = VtocPartition(index=2, tag=0x07, flag=0, start_sector=0, sector_count=0)
+
+        self.assertEqual(remap_guest_visible_sector(pdinfo, partition, alt_info, 25 * 17 + 3), 2000)
+        self.assertEqual(remap_guest_visible_sector(pdinfo, backup_partition, alt_info, 25 * 17 + 3), 25 * 17 + 3)
+        self.assertEqual(remap_guest_visible_sector(pdinfo, other_partition, alt_info, 25 * 17 + 3), 25 * 17 + 3)
+
+    def test_trace_sector_uses_guest_visible_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            image_path = temp_path / 'trace.raw'
+            create_raw_image_skeleton(
+                image_path,
+                geometry=RawDiskGeometry(cylinders=32, heads=4, sectors_per_track=17),
+                unix_partition_start=1,
+                unix_partition_size=512,
+                volume='SVR4',
+                slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=64, sector_count=128)],
+            )
+
+            image = bytearray(image_path.read_bytes())
+            pdinfo_offset = (1 + 29) * 512
+            image[pdinfo_offset + 92:pdinfo_offset + 96] = (15872).to_bytes(4, 'little')
+            image[pdinfo_offset + 96:pdinfo_offset + 98] = (32).to_bytes(2, 'little')
+            alt_offset = (1 * 512) + 15872
+            image[alt_offset:alt_offset + 4] = ALT_SANITY.to_bytes(4, 'little')
+            image[alt_offset + 4:alt_offset + 6] = ALT_VERSION.to_bytes(2, 'little')
+            image[alt_offset + 8:alt_offset + 10] = (0).to_bytes(2, 'little')
+            image[alt_offset + 10:alt_offset + 12] = (0).to_bytes(2, 'little')
+            image[alt_offset + 16:alt_offset + 18] = (1).to_bytes(2, 'little')
+            image[alt_offset + 18:alt_offset + 20] = (1).to_bytes(2, 'little')
+            image[alt_offset + 20:alt_offset + 24] = (300).to_bytes(4, 'little', signed=True)
+            image[alt_offset + 24:alt_offset + 28] = (69).to_bytes(4, 'little', signed=True)
+            image[300 * 512:(300 * 512) + 32] = b'guest-visible remap works here..'
+            image_path.write_bytes(image)
+
+            absolute_sector, guest_visible_sector, data = resolve_guest_visible_sector(image_path, '1', 5)
+
+            self.assertEqual(absolute_sector, 69)
+            self.assertEqual(guest_visible_sector, 300)
+            self.assertEqual(data[:32], b'guest-visible remap works here..')
+
     @staticmethod
-    def build_detectable_ufs_image() -> bytearray:
+    def build_detectable_ufs_image(super_offset: int = UFS_SB_OFFSET) -> bytearray:
         ufs_image, _ = build_test_filesystem()
-        super_offset = UFS_SB_OFFSET
         ufs_image[super_offset + UFS_FS_MAGIC_OFFSET:super_offset + UFS_FS_MAGIC_OFFSET + 4] = UFS_MAGIC.to_bytes(4, 'little')
         ufs_image[super_offset + UFS_FS_BSIZE_OFFSET:super_offset + UFS_FS_BSIZE_OFFSET + 4] = (4096).to_bytes(4, 'little')
         ufs_image[super_offset + UFS_FS_FSIZE_OFFSET:super_offset + UFS_FS_FSIZE_OFFSET + 4] = (512).to_bytes(4, 'little')
@@ -35,7 +119,31 @@ class DiskLayoutTests(unittest.TestCase):
         ufs_image[super_offset + UFS_FS_INOPB_OFFSET:super_offset + UFS_FS_INOPB_OFFSET + 4] = (32).to_bytes(4, 'little')
         ufs_image[super_offset + UFS_FS_IPG_OFFSET:super_offset + UFS_FS_IPG_OFFSET + 4] = (16).to_bytes(4, 'little')
         ufs_image[super_offset + UFS_FS_FPG_OFFSET:super_offset + UFS_FS_FPG_OFFSET + 4] = (128).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_CGOFFSET_OFFSET:super_offset + UFS_FS_CGOFFSET_OFFSET + 4] = (0).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_CGMASK_OFFSET:super_offset + UFS_FS_CGMASK_OFFSET + 4] = (0).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_CBLKNO_OFFSET:super_offset + UFS_FS_CBLKNO_OFFSET + 4] = (1).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_IBLKNO_OFFSET:super_offset + UFS_FS_IBLKNO_OFFSET + 4] = (2).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_DBLKNO_OFFSET:super_offset + UFS_FS_DBLKNO_OFFSET + 4] = (3).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_NCG_OFFSET:super_offset + UFS_FS_NCG_OFFSET + 4] = (1).to_bytes(4, 'little')
+        ufs_image[super_offset + UFS_FS_NINDIR_OFFSET:super_offset + UFS_FS_NINDIR_OFFSET + 4] = (1024).to_bytes(4, 'little')
         return ufs_image
+
+    def test_slice_probe_rejects_legacy_ufs_superblock_offset(self) -> None:
+        image = self.build_detectable_ufs_image(UFS_SB_OFFSET - 512)
+
+        filesystem, filesystem_offset, _ = select_slice_filesystem(bytes(image))
+
+        self.assertIsNone(filesystem)
+        self.assertEqual(filesystem_offset, 0)
+
+    def test_detect_ufs_prefers_canonical_superblock_interpretation(self) -> None:
+        candidates = detect_ufs_lowlevel(bytes(self.build_detectable_ufs_image()))
+
+        primary_candidates = [candidate for candidate in candidates if candidate.super_offset == UFS_SB_OFFSET]
+
+        self.assertEqual(len(primary_candidates), 1)
+        self.assertEqual(primary_candidates[0].start_offset, 0)
+        self.assertNotIn('layout_bias', primary_candidates[0].details)
 
     def create_nonzero_offset_ufs_image(self, image_path: Path) -> bytearray:
         create_raw_image_skeleton(
@@ -44,12 +152,12 @@ class DiskLayoutTests(unittest.TestCase):
             unix_partition_start=16,
             unix_partition_size=1024,
             volume='SVR4',
-            slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=64, sector_count=256)],
+            slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=80, sector_count=256)],
         )
 
         image = bytearray(image_path.read_bytes())
         ufs_image = self.build_detectable_ufs_image()
-        slice_start = (16 + 64) * 512
+        slice_start = 80 * 512
         image[slice_start:slice_start + len(ufs_image)] = ufs_image
         image_path.write_bytes(image)
         return ufs_image
@@ -67,7 +175,7 @@ class DiskLayoutTests(unittest.TestCase):
                 unix_partition_start=16,
                 unix_partition_size=512,
                 volume='SVR4',
-                slices=[VtocPartition(index=10, tag=0x09, flag=0x200, start_sector=32, sector_count=64)],
+                slices=[VtocPartition(index=10, tag=0x09, flag=0x200, start_sector=48, sector_count=64)],
             )
 
             output_path = temp_path / 'formatted.raw'
@@ -76,7 +184,7 @@ class DiskLayoutTests(unittest.TestCase):
             report = inspect_disk_image(output_path)
             _, slice_info = inspect_slice_by_selector(output_path, 'stand')
 
-            self.assertEqual(slice_info.start_sector, 32)
+            self.assertEqual(slice_info.start_sector, 48)
             self.assertEqual(slice_info.absolute_start_sector, 48)
             self.assertEqual(slice_info.filesystem, 'bfs')
             self.assertEqual([entry['name'] for entry in slice_info.root_entries], ['unix'])
@@ -112,9 +220,9 @@ class DiskLayoutTests(unittest.TestCase):
                     unix_partition_start=16,
                     unix_partition_size=1024,
                     volume='SVR4',
-                    slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=64, sector_count=256)],
+                    slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=80, sector_count=256)],
                 )
-                slice_start_sector = 16 + 64
+                slice_start_sector = 80
                 slice_offset = slice_start_sector * 512
                 slice_image, filesystem = build_test_filesystem()
 
@@ -122,10 +230,12 @@ class DiskLayoutTests(unittest.TestCase):
                 image[slice_offset:slice_offset + len(slice_image)] = slice_image
                 image_path.write_bytes(image)
 
-                def flush_callback(data: bytearray) -> None:
+                def flush_callback(data: bytearray, dirty_ranges: list[tuple[int, int]], sync: bool) -> None:
+                    del sync
                     with image_path.open('r+b') as handle:
-                        handle.seek(slice_offset)
-                        handle.write(data)
+                        for start, end in dirty_ranges:
+                            handle.seek(slice_offset + start)
+                            handle.write(data[start:end])
 
                 volume = UFSVolume(
                     image=bytearray(slice_image),
@@ -148,6 +258,71 @@ class DiskLayoutTests(unittest.TestCase):
 
         trio.run(scenario)
 
+    def test_bfs_volume_uses_absolute_slice_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            image_path = temp_path / 'bfs-skeleton.raw'
+            formatted_path = temp_path / 'bfs.raw'
+            payload_path = temp_path / 'unix'
+            payload_path.write_bytes(b'kernel payload')
+
+            create_raw_image_skeleton(
+                image_path,
+                geometry=RawDiskGeometry(cylinders=32, heads=4, sectors_per_track=17),
+                unix_partition_start=16,
+                unix_partition_size=512,
+                volume='SVR4',
+                slices=[VtocPartition(index=10, tag=0x09, flag=0x200, start_sector=48, sector_count=64)],
+            )
+
+            format_bfs_path(image_path, 'stand', formatted_path, [('unix', payload_path)], dirent_slots=None)
+            _, slice_info = inspect_slice_by_selector(formatted_path, 'stand')
+            bfs_image = read_slice_bytes(formatted_path, slice_info.absolute_start_sector, slice_info.sector_count)
+
+            volume = BFSVolume.open_raw_image(formatted_path, 'stand')
+            try:
+                self.assertEqual(volume.filesystem.start_offset, 0)
+                self.assertEqual(volume.image[:4], bfs_image[:4])
+            finally:
+                volume.close()
+
+    def test_bfs_operations_persist_mutation_on_nonzero_offset_slice(self) -> None:
+        async def scenario() -> None:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                image_path = temp_path / 'bfs-mutate-skeleton.raw'
+                formatted_path = temp_path / 'bfs-mutate.raw'
+                payload_path = temp_path / 'unix'
+                payload_path.write_bytes(b'kernel payload')
+
+                create_raw_image_skeleton(
+                    image_path,
+                    geometry=RawDiskGeometry(cylinders=32, heads=4, sectors_per_track=17),
+                    unix_partition_start=16,
+                    unix_partition_size=512,
+                    volume='SVR4',
+                    slices=[VtocPartition(index=10, tag=0x09, flag=0x200, start_sector=48, sector_count=64)],
+                )
+
+                format_bfs_path(image_path, 'stand', formatted_path, [('unix', payload_path)], dirent_slots=None)
+                _, slice_info = inspect_slice_by_selector(formatted_path, 'stand')
+                volume = BFSVolume.open_raw_image(formatted_path, 'stand')
+                try:
+                    operations = BFSOperations(volume)
+                    ctx = make_bfs_test_context(uid=1000, gid=100, umask=0o022)
+                    file_info, created = await operations.create(pyfuse3.ROOT_INODE, b'offset.txt', 0o644, os.O_RDWR, ctx)
+                    self.assertEqual(created.st_size, 0)
+                    await operations.write(file_info.fh, 0, b'persisted through slice offset')
+                    await operations.release(file_info.fh)
+
+                    persisted_slice = read_slice_bytes(formatted_path, slice_info.absolute_start_sector, slice_info.sector_count)
+                    _, _, data = read_bfs_path_bytes(persisted_slice, volume.filesystem, '/offset.txt')
+                    self.assertEqual(data, b'persisted through slice offset')
+                finally:
+                    volume.close()
+
+        trio.run(scenario)
+
     def test_slice_probe_prefers_filesystem_at_slice_start(self) -> None:
         image = self.build_detectable_ufs_image()
         image[512:516] = BFS_MAGIC.to_bytes(4, 'little')
@@ -156,6 +331,18 @@ class DiskLayoutTests(unittest.TestCase):
 
         self.assertEqual(filesystem, 'ufs')
         self.assertEqual(filesystem_offset, 0)
+
+    def test_slice_probe_rejects_embedded_filesystem_away_from_slice_start(self) -> None:
+        image = bytearray(512 * 1024)
+        embedded_offset = 193024
+        ufs_image = self.build_detectable_ufs_image()
+        image[embedded_offset:embedded_offset + len(ufs_image)] = ufs_image
+
+        filesystem, filesystem_offset, root_entries = select_slice_filesystem(bytes(image))
+
+        self.assertIsNone(filesystem)
+        self.assertEqual(filesystem_offset, 0)
+        self.assertEqual(root_entries, [])
 
     def test_create_skeleton_rejects_out_of_range_slice(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -167,7 +354,7 @@ class DiskLayoutTests(unittest.TestCase):
                     unix_partition_start=16,
                     unix_partition_size=64,
                     volume='SVR4',
-                    slices=[VtocPartition(index=10, tag=0x09, flag=0x200, start_sector=48, sector_count=32)],
+                    slices=[VtocPartition(index=10, tag=0x09, flag=0x200, start_sector=64, sector_count=32)],
                 )
             self.assertIn('exceeds the UNIX partition bounds', str(error.exception))
 
@@ -181,7 +368,7 @@ class DiskLayoutTests(unittest.TestCase):
                     unix_partition_start=16,
                     unix_partition_size=64,
                     volume='SVR4',
-                    slices=[VtocPartition(index=16, tag=0x09, flag=0x200, start_sector=16, sector_count=16)],
+                    slices=[VtocPartition(index=16, tag=0x09, flag=0x200, start_sector=32, sector_count=16)],
                 )
             self.assertIn('outside the supported VTOC range', str(error.exception))
 

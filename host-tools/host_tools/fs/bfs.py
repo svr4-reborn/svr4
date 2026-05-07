@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import time
 
-from .common import BFS_DIRENT_SIZE, BFS_LDIR_SIZE, BFS_MAGIC, BFS_ROOT_INODE, BFS_SUPER_SIZE, FilesystemCandidate, SECTOR_SIZE, u16, u32
+from .common import BFS_DIRENT_SIZE, BFS_LDIR_SIZE, BFS_MAGIC, BFS_ROOT_INODE, BFS_SUPER_SIZE, FilesystemCandidate, SECTOR_SIZE, i32, u16, u32
 
 
 BFS_VREG = 1
@@ -19,6 +19,34 @@ class BfsDirentRecord:
     d_sblock: int
     d_eblock: int
     d_eoffset: int
+
+
+@dataclass(frozen=True)
+class BfsFileEntry:
+    inode_number: int
+    name: str | None
+    data: bytes
+    file_type: int
+    mode: int
+    uid: int
+    gid: int
+    nlink: int
+    atime: int
+    mtime: int
+    ctime: int
+
+
+def read_bfs_vattr(raw: ImageBuffer, offset: int = 16) -> dict[str, int]:
+    return {
+        'file_type': u32(raw, offset),
+        'mode': u16(raw, offset + 4),
+        'uid': u16(raw, offset + 6),
+        'gid': u16(raw, offset + 8),
+        'nlink': u16(raw, offset + 10),
+        'atime': i32(raw, offset + 12),
+        'mtime': i32(raw, offset + 16),
+        'ctime': i32(raw, offset + 20),
+    }
 
 
 def detect_bfs(image: ImageBuffer) -> list[FilesystemCandidate]:
@@ -55,31 +83,60 @@ def read_bfs_dirent(image: ImageBuffer, fs_start: int, inode_number: int) -> dic
     if inode_offset < fs_start or inode_offset + BFS_DIRENT_SIZE > len(image):
         return None
     raw = image[inode_offset:inode_offset + BFS_DIRENT_SIZE]
-    return {'d_ino': u16(raw, 0), 'd_sblock': u32(raw, 4), 'd_eblock': u32(raw, 8), 'd_eoffset': u32(raw, 12)}
+    inode = {'d_ino': u16(raw, 0), 'd_sblock': u32(raw, 4), 'd_eblock': u32(raw, 8), 'd_eoffset': u32(raw, 12)}
+    inode.update(read_bfs_vattr(raw))
+    return inode
 
 
-def list_bfs_root(image: ImageBuffer, filesystem: FilesystemCandidate) -> list[dict[str, int | str]]:
+def bfs_dirent_slot_count(image: ImageBuffer, filesystem: FilesystemCandidate) -> int:
+    superblock = read_bfs_superblock(image, filesystem)
+    table_bytes = max(superblock['data_start'] - BFS_SUPER_SIZE, 0)
+    return table_bytes // BFS_DIRENT_SIZE
+
+
+def read_bfs_root_directory_entries(image: ImageBuffer, filesystem: FilesystemCandidate) -> list[dict[str, int | str]]:
     root_dirent = read_bfs_dirent(image, filesystem.start_offset, BFS_ROOT_INODE)
     if root_dirent is None:
         return []
-    directory_start = filesystem.start_offset + (root_dirent['d_sblock'] * SECTOR_SIZE)
-    directory_end = filesystem.start_offset + root_dirent['d_eoffset'] + 1
-    if directory_end <= directory_start or directory_end > len(image):
-        return []
+    directory_bytes = read_bfs_file(image, filesystem, root_dirent)
     entries: list[dict[str, int | str]] = []
-    directory_bytes = image[directory_start:directory_end]
     for offset in range(0, len(directory_bytes), BFS_LDIR_SIZE):
+        if offset + BFS_LDIR_SIZE > len(directory_bytes):
+            break
         inode_number = u16(directory_bytes, offset)
         if inode_number == 0:
             continue
         name = directory_bytes[offset + 2:offset + 16].split(b'\0', 1)[0].decode('ascii', errors='replace').strip()
         if not name:
             continue
+        entries.append({'name': name, 'inode': inode_number, 'offset': offset})
+    return entries
+
+
+def iter_bfs_directory_entries(image: ImageBuffer, filesystem: FilesystemCandidate) -> list[dict[str, int | str]]:
+    entries: list[dict[str, int | str]] = []
+    for directory_entry in read_bfs_root_directory_entries(image, filesystem):
+        inode_number = int(directory_entry['inode'])
         inode = read_bfs_dirent(image, filesystem.start_offset, inode_number)
-        entry: dict[str, int | str] = {'name': name, 'inode': inode_number}
-        if inode is not None and inode['d_sblock'] != 0:
-            entry['size'] = (inode['d_eoffset'] - (inode['d_sblock'] * SECTOR_SIZE)) + 1
-        entries.append(entry)
+        if inode is None or int(inode['d_ino']) == 0:
+            continue
+        entries.append(
+            {
+                'name': str(directory_entry['name']),
+                'inode': inode_number,
+                'size': bfs_file_size(inode),
+                'mode': int(inode['mode']),
+                'uid': int(inode['uid']),
+                'gid': int(inode['gid']),
+                'nlink': int(inode['nlink']),
+                'file_type': int(inode['file_type']),
+            }
+        )
+    return entries
+
+
+def list_bfs_root(image: ImageBuffer, filesystem: FilesystemCandidate) -> list[dict[str, int | str]]:
+    entries = iter_bfs_directory_entries(image, filesystem)
     entries.sort(key=lambda item: str(item['name']))
     return entries
 
@@ -201,18 +258,45 @@ def write_bfs_inode(image: bytearray, filesystem: FilesystemCandidate, inode_num
     image[inode_offset + 4:inode_offset + 8] = int(inode['d_sblock']).to_bytes(4, 'little', signed=False)
     image[inode_offset + 8:inode_offset + 12] = int(inode['d_eblock']).to_bytes(4, 'little', signed=False)
     image[inode_offset + 12:inode_offset + 16] = int(inode['d_eoffset']).to_bytes(4, 'little', signed=False)
+    if 'file_type' in inode:
+        image[inode_offset + 16:inode_offset + 20] = int(inode['file_type']).to_bytes(4, 'little', signed=False)
+    if 'mode' in inode:
+        image[inode_offset + 20:inode_offset + 22] = int(inode['mode']).to_bytes(2, 'little', signed=False)
+    if 'uid' in inode:
+        image[inode_offset + 22:inode_offset + 24] = int(inode['uid']).to_bytes(2, 'little', signed=False)
+    if 'gid' in inode:
+        image[inode_offset + 24:inode_offset + 26] = int(inode['gid']).to_bytes(2, 'little', signed=False)
+    if 'nlink' in inode:
+        image[inode_offset + 26:inode_offset + 28] = int(inode['nlink']).to_bytes(2, 'little', signed=False)
+    if 'atime' in inode:
+        image[inode_offset + 28:inode_offset + 32] = int(inode['atime']).to_bytes(4, 'little', signed=True)
+    if 'mtime' in inode:
+        image[inode_offset + 32:inode_offset + 36] = int(inode['mtime']).to_bytes(4, 'little', signed=True)
+    if 'ctime' in inode:
+        image[inode_offset + 36:inode_offset + 40] = int(inode['ctime']).to_bytes(4, 'little', signed=True)
 
 
-def build_bfs_vattr(file_type: int, mode: int, *, uid: int = 0, gid: int = 0, nlink: int = 1, timestamp: int = 0) -> bytes:
+def build_bfs_vattr(
+    file_type: int,
+    mode: int,
+    *,
+    uid: int = 0,
+    gid: int = 0,
+    nlink: int = 1,
+    timestamp: int = 0,
+    atime: int | None = None,
+    mtime: int | None = None,
+    ctime: int | None = None,
+) -> bytes:
     raw = bytearray(40)
     raw[0:4] = int(file_type).to_bytes(4, 'little', signed=False)
     raw[4:6] = int(mode).to_bytes(2, 'little', signed=False)
     raw[6:8] = int(uid).to_bytes(2, 'little', signed=False)
     raw[8:10] = int(gid).to_bytes(2, 'little', signed=False)
     raw[10:12] = int(nlink).to_bytes(2, 'little', signed=False)
-    raw[12:16] = int(timestamp).to_bytes(4, 'little', signed=True)
-    raw[16:20] = int(timestamp).to_bytes(4, 'little', signed=True)
-    raw[20:24] = int(timestamp).to_bytes(4, 'little', signed=True)
+    raw[12:16] = int(timestamp if atime is None else atime).to_bytes(4, 'little', signed=True)
+    raw[16:20] = int(timestamp if mtime is None else mtime).to_bytes(4, 'little', signed=True)
+    raw[20:24] = int(timestamp if ctime is None else ctime).to_bytes(4, 'little', signed=True)
     return bytes(raw)
 
 
@@ -228,13 +312,26 @@ def build_bfs_dirent_bytes(
     gid: int = 0,
     nlink: int = 1,
     timestamp: int = 0,
+    atime: int | None = None,
+    mtime: int | None = None,
+    ctime: int | None = None,
 ) -> bytes:
     raw = bytearray(BFS_DIRENT_SIZE)
     raw[0:2] = int(inode_number).to_bytes(2, 'little', signed=False)
     raw[4:8] = int(start_block).to_bytes(4, 'little', signed=False)
     raw[8:12] = int(end_block).to_bytes(4, 'little', signed=False)
     raw[12:16] = int(end_offset).to_bytes(4, 'little', signed=False)
-    raw[16:56] = build_bfs_vattr(file_type, mode, uid=uid, gid=gid, nlink=nlink, timestamp=timestamp)
+    raw[16:56] = build_bfs_vattr(
+        file_type,
+        mode,
+        uid=uid,
+        gid=gid,
+        nlink=nlink,
+        timestamp=timestamp,
+        atime=atime,
+        mtime=mtime,
+        ctime=ctime,
+    )
     return bytes(raw)
 
 
@@ -453,4 +550,424 @@ def apply_bfs_replacement(image: bytearray, filesystem: FilesystemCandidate, tar
         'old_capacity': current_capacity,
         'new_capacity': target_capacity,
         'moved_blocks': moved_blocks,
+    }
+
+
+def normalize_bfs_path(path: str) -> str:
+    parts = [part for part in path.split('/') if part]
+    if not parts:
+        return '/'
+    if len(parts) > 1:
+        raise SystemExit(f'error: bfs only supports the root directory, so nested path {path!r} is invalid')
+    name = parts[0]
+    try:
+        encoded_name = name.encode('ascii', errors='strict')
+    except UnicodeEncodeError as error:
+        raise SystemExit(f'error: bfs file name {name!r} is not ASCII') from error
+    if len(encoded_name) > 14:
+        raise SystemExit(f'error: bfs file name {name!r} exceeds the 14-character BFS limit')
+    return '/' + name
+
+
+def bfs_name_from_path(path: str) -> str:
+    normalized = normalize_bfs_path(path)
+    if normalized == '/':
+        raise SystemExit('error: bfs root cannot be used as a regular file path')
+    return normalized[1:]
+
+
+def bfs_root_inode(image: ImageBuffer, filesystem: FilesystemCandidate) -> dict[str, int]:
+    root_inode = read_bfs_dirent(image, filesystem.start_offset, BFS_ROOT_INODE)
+    if root_inode is None or int(root_inode['d_ino']) == 0:
+        raise SystemExit('error: bfs root inode is missing')
+    return root_inode
+
+
+def snapshot_bfs_entries(image: ImageBuffer, filesystem: FilesystemCandidate) -> list[BfsFileEntry]:
+    names_by_inode = {int(entry['inode']): str(entry['name']) for entry in read_bfs_root_directory_entries(image, filesystem)}
+    entries: list[BfsFileEntry] = []
+    for record in scan_bfs_dirents(image, filesystem):
+        if record.inode_number == BFS_ROOT_INODE or record.d_ino == 0:
+            continue
+        inode = read_bfs_dirent(image, filesystem.start_offset, record.inode_number)
+        if inode is None or int(inode['d_ino']) == 0:
+            continue
+        entries.append(
+            BfsFileEntry(
+                inode_number=record.inode_number,
+                name=names_by_inode.get(record.inode_number),
+                data=read_bfs_file(image, filesystem, inode),
+                file_type=int(inode['file_type']),
+                mode=int(inode['mode']),
+                uid=int(inode['uid']),
+                gid=int(inode['gid']),
+                nlink=int(inode['nlink']),
+                atime=int(inode['atime']),
+                mtime=int(inode['mtime']),
+                ctime=int(inode['ctime']),
+            )
+        )
+    entries.sort(key=lambda entry: entry.inode_number)
+    return entries
+
+
+def build_bfs_filesystem_image_with_entries(
+    size_bytes: int,
+    entries: list[BfsFileEntry],
+    *,
+    dirent_slots: int,
+    root_inode: dict[str, int] | None = None,
+    data_end: int | None = None,
+) -> bytes:
+    if dirent_slots < 1:
+        raise SystemExit('error: bfs dirent slot count must be at least one')
+
+    normalized: dict[int, BfsFileEntry] = {}
+    seen_names: set[str] = set()
+    max_inode_number = BFS_ROOT_INODE + dirent_slots - 1
+    for entry in entries:
+        if entry.inode_number <= BFS_ROOT_INODE or entry.inode_number > max_inode_number:
+            raise SystemExit(f'error: bfs inode {entry.inode_number} is outside the reserved dirent table')
+        if entry.inode_number in normalized:
+            raise SystemExit(f'error: duplicate bfs inode slot {entry.inode_number}')
+        if entry.name is not None:
+            normalized_name = bfs_name_from_path('/' + entry.name)
+            if normalized_name in seen_names:
+                raise SystemExit(f'error: duplicate bfs file name {entry.name!r}')
+            seen_names.add(normalized_name)
+        normalized[entry.inode_number] = entry
+
+    filesystem_end = size_bytes - 1 if data_end is None else min(size_bytes - 1, int(data_end))
+    data_start = ((BFS_SUPER_SIZE + (dirent_slots * BFS_DIRENT_SIZE) + SECTOR_SIZE - 1) // SECTOR_SIZE) * SECTOR_SIZE
+    root_directory_entries = [entry for entry in normalized.values() if entry.name is not None]
+    root_directory_bytes = len(root_directory_entries) * BFS_LDIR_SIZE
+    root_directory_allocation = max(SECTOR_SIZE, ((max(root_directory_bytes, 1) + SECTOR_SIZE - 1) // SECTOR_SIZE) * SECTOR_SIZE)
+    next_offset = data_start + root_directory_allocation
+    if next_offset - 1 > filesystem_end:
+        raise SystemExit('error: bfs root directory would exceed the filesystem bounds')
+
+    file_layouts: dict[int, tuple[int, int, int]] = {}
+    current_offset = next_offset
+    for inode_number in sorted(normalized):
+        entry = normalized[inode_number]
+        if entry.data:
+            allocation = ((len(entry.data) + SECTOR_SIZE - 1) // SECTOR_SIZE) * SECTOR_SIZE
+            start_offset = current_offset
+            end_offset = start_offset + len(entry.data) - 1
+            end_block = ((start_offset + allocation) // SECTOR_SIZE) - 1
+            if start_offset + allocation - 1 > filesystem_end:
+                raise SystemExit(f'error: bfs filesystem does not have enough contiguous space for inode {inode_number}')
+            file_layouts[inode_number] = (start_offset, end_block, end_offset)
+            current_offset += allocation
+        else:
+            file_layouts[inode_number] = (0, 0, 0)
+
+    image = bytearray(size_bytes)
+    image[0:4] = BFS_MAGIC.to_bytes(4, 'little', signed=False)
+    image[4:8] = data_start.to_bytes(4, 'little', signed=False)
+    image[8:12] = filesystem_end.to_bytes(4, 'little', signed=False)
+
+    root_metadata = dict(root_inode or {})
+    root_mode = int(root_metadata.get('mode', 0o755))
+    root_uid = int(root_metadata.get('uid', 0))
+    root_gid = int(root_metadata.get('gid', 0))
+    root_nlink = int(root_metadata.get('nlink', 2))
+    root_atime = int(root_metadata.get('atime', 0))
+    root_mtime = int(root_metadata.get('mtime', 0))
+    root_ctime = int(root_metadata.get('ctime', 0))
+    root_start_block = data_start // SECTOR_SIZE
+    root_end_block = ((data_start + root_directory_allocation) // SECTOR_SIZE) - 1
+    root_end_offset = (data_start + root_directory_bytes - 1) if root_directory_bytes else (data_start - 1)
+    image[BFS_SUPER_SIZE:BFS_SUPER_SIZE + BFS_DIRENT_SIZE] = build_bfs_dirent_bytes(
+        BFS_ROOT_INODE,
+        root_start_block,
+        root_end_block,
+        root_end_offset,
+        file_type=BFS_VDIR,
+        mode=root_mode,
+        uid=root_uid,
+        gid=root_gid,
+        nlink=root_nlink,
+        atime=root_atime,
+        mtime=root_mtime,
+        ctime=root_ctime,
+    )
+
+    directory_offset = data_start
+    for inode_number in sorted(normalized):
+        entry = normalized[inode_number]
+        start_offset, end_block, end_offset = file_layouts[inode_number]
+        start_block = 0 if start_offset == 0 else start_offset // SECTOR_SIZE
+        inode_offset = BFS_SUPER_SIZE + ((inode_number - BFS_ROOT_INODE) * BFS_DIRENT_SIZE)
+        image[inode_offset:inode_offset + BFS_DIRENT_SIZE] = build_bfs_dirent_bytes(
+            inode_number,
+            start_block,
+            end_block,
+            end_offset,
+            file_type=entry.file_type,
+            mode=entry.mode,
+            uid=entry.uid,
+            gid=entry.gid,
+            nlink=entry.nlink,
+            atime=entry.atime,
+            mtime=entry.mtime,
+            ctime=entry.ctime,
+        )
+        if entry.data:
+            image[start_offset:start_offset + len(entry.data)] = entry.data
+        if entry.name is not None:
+            image[directory_offset:directory_offset + 2] = int(inode_number).to_bytes(2, 'little', signed=False)
+            image[directory_offset + 2:directory_offset + 16] = entry.name.encode('ascii').ljust(14, b'\0')
+            directory_offset += BFS_LDIR_SIZE
+
+    return bytes(image)
+
+
+def rebuild_bfs_region(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    entries: list[BfsFileEntry],
+    *,
+    root_inode: dict[str, int] | None = None,
+) -> None:
+    slot_count = bfs_dirent_slot_count(image, filesystem)
+    superblock = read_bfs_superblock(image, filesystem)
+    filesystem_size = len(image) - filesystem.start_offset
+    rebuilt = build_bfs_filesystem_image_with_entries(
+        filesystem_size,
+        entries,
+        dirent_slots=slot_count,
+        root_inode=root_inode,
+        data_end=int(superblock['data_end']),
+    )
+    end_offset = filesystem.start_offset + filesystem_size
+    image[filesystem.start_offset:end_offset] = rebuilt
+
+
+def create_bfs_file(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    target_path: str,
+    data: bytes,
+    *,
+    mode: int = 0o644,
+    uid: int = 0,
+    gid: int = 0,
+    timestamp: int | None = None,
+) -> dict[str, int | str]:
+    name = bfs_name_from_path(target_path)
+    snapshot = snapshot_bfs_entries(image, filesystem)
+    if any(entry.name == name for entry in snapshot):
+        raise SystemExit(f'error: bfs file {target_path} already exists')
+
+    used_inodes = {entry.inode_number for entry in snapshot}
+    max_inode_number = BFS_ROOT_INODE + bfs_dirent_slot_count(image, filesystem) - 1
+    inode_number = 0
+    for candidate in range(BFS_ROOT_INODE + 1, max_inode_number + 1):
+        if candidate not in used_inodes:
+            inode_number = candidate
+            break
+    if inode_number == 0:
+        raise SystemExit('error: no free BFS dirent slots remain')
+
+    updated_snapshot = snapshot + [
+        BfsFileEntry(
+            inode_number=inode_number,
+            name=name,
+            data=data,
+            file_type=BFS_VREG,
+            mode=mode,
+            uid=uid,
+            gid=gid,
+            nlink=1,
+            atime=int(time()) if timestamp is None else int(timestamp),
+            mtime=int(time()) if timestamp is None else int(timestamp),
+            ctime=int(time()) if timestamp is None else int(timestamp),
+        )
+    ]
+    rebuild_bfs_region(image, filesystem, updated_snapshot, root_inode=bfs_root_inode(image, filesystem))
+    return {'target_path': normalize_bfs_path(target_path), 'inode': inode_number, 'size': len(data)}
+
+
+def remove_bfs_path(image: bytearray, filesystem: FilesystemCandidate, target_path: str) -> dict[str, int | str]:
+    name = bfs_name_from_path(target_path)
+    snapshot = snapshot_bfs_entries(image, filesystem)
+    target_entry = None
+    remaining_entries: list[BfsFileEntry] = []
+    for entry in snapshot:
+        if entry.name == name:
+            target_entry = entry
+            continue
+        remaining_entries.append(entry)
+    if target_entry is None:
+        raise SystemExit(f'error: could not resolve {target_path} inside the bfs filesystem')
+    rebuild_bfs_region(image, filesystem, remaining_entries, root_inode=bfs_root_inode(image, filesystem))
+    return {'target_path': normalize_bfs_path(target_path), 'inode': target_entry.inode_number}
+
+
+def detach_bfs_path(image: bytearray, filesystem: FilesystemCandidate, target_path: str) -> dict[str, int | str]:
+    name = bfs_name_from_path(target_path)
+    snapshot = snapshot_bfs_entries(image, filesystem)
+    target_entry = None
+    updated_entries: list[BfsFileEntry] = []
+    timestamp = int(time())
+    for entry in snapshot:
+        if entry.name == name:
+            target_entry = replace(entry, name=None, nlink=0, ctime=timestamp)
+            updated_entries.append(target_entry)
+            continue
+        updated_entries.append(entry)
+    if target_entry is None:
+        raise SystemExit(f'error: could not resolve {target_path} inside the bfs filesystem')
+    rebuild_bfs_region(image, filesystem, updated_entries, root_inode=bfs_root_inode(image, filesystem))
+    return {'target_path': normalize_bfs_path(target_path), 'inode': target_entry.inode_number}
+
+
+def finalize_bfs_unlinked_inode(image: bytearray, filesystem: FilesystemCandidate, inode_number: int) -> dict[str, int]:
+    if inode_number == BFS_ROOT_INODE:
+        raise SystemExit('error: refusing to finalize the BFS root inode')
+    snapshot = snapshot_bfs_entries(image, filesystem)
+    target_entry = None
+    remaining_entries: list[BfsFileEntry] = []
+    for entry in snapshot:
+        if entry.inode_number == inode_number:
+            target_entry = entry
+            continue
+        remaining_entries.append(entry)
+    if target_entry is None:
+        raise SystemExit(f'error: bfs inode {inode_number} does not exist')
+    if target_entry.name is not None:
+        raise SystemExit(f'error: refusing to finalize linked bfs inode {inode_number}')
+    rebuild_bfs_region(image, filesystem, remaining_entries, root_inode=bfs_root_inode(image, filesystem))
+    return {'inode': inode_number}
+
+
+def replace_bfs_inode_data(image: bytearray, filesystem: FilesystemCandidate, inode_number: int, new_data: bytes) -> dict[str, int | str]:
+    if inode_number == BFS_ROOT_INODE:
+        raise SystemExit('error: refusing to replace the BFS root directory contents as a regular file')
+    snapshot = snapshot_bfs_entries(image, filesystem)
+    target_entry = None
+    updated_entries: list[BfsFileEntry] = []
+    timestamp = int(time())
+    for entry in snapshot:
+        if entry.inode_number == inode_number:
+            target_entry = replace(entry, data=new_data, mtime=timestamp, ctime=timestamp)
+            updated_entries.append(target_entry)
+            continue
+        updated_entries.append(entry)
+    if target_entry is None:
+        raise SystemExit(f'error: bfs inode {inode_number} does not exist')
+    rebuild_bfs_region(image, filesystem, updated_entries, root_inode=bfs_root_inode(image, filesystem))
+    return {
+        'inode': inode_number,
+        'name': '' if target_entry.name is None else target_entry.name,
+        'new_size': len(new_data),
+    }
+
+
+def rename_bfs_path(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    source_path: str,
+    target_path: str,
+    *,
+    detach_target: bool = False,
+) -> dict[str, int | str]:
+    source_name = bfs_name_from_path(source_path)
+    target_name = bfs_name_from_path(target_path)
+    if source_name == target_name:
+        return {'source_path': normalize_bfs_path(source_path), 'target_path': normalize_bfs_path(target_path)}
+
+    snapshot = snapshot_bfs_entries(image, filesystem)
+    source_entry = None
+    overwritten_inode = 0
+    updated_entries: list[BfsFileEntry] = []
+    timestamp = int(time())
+    for entry in snapshot:
+        if entry.name == source_name:
+            source_entry = replace(entry, name=target_name, ctime=timestamp)
+            updated_entries.append(source_entry)
+            continue
+        if entry.name == target_name:
+            overwritten_inode = entry.inode_number
+            if detach_target:
+                updated_entries.append(replace(entry, name=None, nlink=0, ctime=timestamp))
+            continue
+        updated_entries.append(entry)
+    if source_entry is None:
+        raise SystemExit(f'error: could not resolve {source_path} inside the bfs filesystem')
+    rebuild_bfs_region(image, filesystem, updated_entries, root_inode=bfs_root_inode(image, filesystem))
+    result: dict[str, int | str] = {
+        'source_path': normalize_bfs_path(source_path),
+        'target_path': normalize_bfs_path(target_path),
+        'inode': source_entry.inode_number,
+    }
+    if overwritten_inode != 0:
+        result['overwritten_inode'] = overwritten_inode
+    return result
+
+
+def write_bfs_inode_fields(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    inode_number: int,
+    *,
+    mode: int | None = None,
+    uid: int | None = None,
+    gid: int | None = None,
+    nlink: int | None = None,
+    atime: int | None = None,
+    mtime: int | None = None,
+    ctime: int | None = None,
+) -> dict[str, int]:
+    inode = read_bfs_dirent(image, filesystem.start_offset, inode_number)
+    if inode is None or int(inode['d_ino']) == 0:
+        raise SystemExit(f'error: bfs inode {inode_number} does not exist')
+    if mode is not None:
+        inode['mode'] = int(mode)
+    if uid is not None:
+        inode['uid'] = int(uid)
+    if gid is not None:
+        inode['gid'] = int(gid)
+    if nlink is not None:
+        inode['nlink'] = int(nlink)
+    if atime is not None:
+        inode['atime'] = int(atime)
+    if mtime is not None:
+        inode['mtime'] = int(mtime)
+    if ctime is not None:
+        inode['ctime'] = int(ctime)
+    write_bfs_inode(image, filesystem, inode_number, inode)
+    return inode
+
+
+def bfs_filesystem_stats(image: ImageBuffer, filesystem: FilesystemCandidate) -> dict[str, int]:
+    superblock = read_bfs_superblock(image, filesystem)
+    entries = snapshot_bfs_entries(image, filesystem)
+    visible_count = sum(1 for entry in entries if entry.name is not None)
+    root_directory_bytes = max(1, visible_count * BFS_LDIR_SIZE)
+    root_directory_allocation = ((root_directory_bytes + SECTOR_SIZE - 1) // SECTOR_SIZE) * SECTOR_SIZE
+    allocated_bytes = root_directory_allocation
+    for entry in entries:
+        if not entry.data:
+            continue
+        allocated_bytes += ((len(entry.data) + SECTOR_SIZE - 1) // SECTOR_SIZE) * SECTOR_SIZE
+
+    total_bytes = (int(superblock['data_end']) - int(superblock['data_start'])) + 1
+    if total_bytes < 0:
+        total_bytes = 0
+    free_bytes = max(total_bytes - allocated_bytes, 0)
+
+    slot_count = bfs_dirent_slot_count(image, filesystem)
+    free_slots = (slot_count - 1) - len(entries)
+    if free_slots < 0:
+        free_slots = 0
+
+    return {
+        'bsize': SECTOR_SIZE,
+        'blocks': total_bytes // SECTOR_SIZE,
+        'bfree': free_bytes // SECTOR_SIZE,
+        'files': max(slot_count - 1, 0),
+        'ffree': free_slots,
+        'namemax': 14,
     }

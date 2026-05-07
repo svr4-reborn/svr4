@@ -1,0 +1,8 @@
+#ifndef HOST_TOOLS_ORIGINAL_UFS_FSCK_COMPAT_SYS_USTAT_H
+#define HOST_TOOLS_ORIGINAL_UFS_FSCK_COMPAT_SYS_USTAT_H
+
+struct ustat {
+    int unused;
+};
+
+#endif

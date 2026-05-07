@@ -16,12 +16,6 @@ def select_slice_filesystem(image: bytes) -> tuple[str, int, list[dict[str, int 
     for candidate in bfs_candidates:
         if candidate.start_offset == 0:
             return 'bfs', candidate.start_offset, list_bfs_root(image, candidate)
-    if ufs_candidates:
-        candidate = ufs_candidates[0]
-        return 'ufs', candidate.start_offset, list_ufs_root(image, candidate)
-    if bfs_candidates:
-        candidate = bfs_candidates[0]
-        return 'bfs', candidate.start_offset, list_bfs_root(image, candidate)
     return None, 0, []
 
 

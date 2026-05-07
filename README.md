@@ -48,3 +48,9 @@ In no particular order:
 - On the topic of userspace, a userspace bootstrap tree with xbstrap or jinx would be a good idea
 - I can almost guarantee the code still has a trillion spots in it that are likely broken due to modern compilers interacting with code that has a tendency to use old stuff.
 - Perhaps a clang format file? A part of me wants to fix things up fully first before I reformat all that, but I'm not sure lol
+
+# Known kernel issues
+
+Again, in no particular order.
+
+- Potentially a 86box issue in some way as well, but the kernel has issues with 86boxes 518MB hard disk preset (1054 cylinders, 16 heads, 63 sectors). It thinks it has 32 heads instead, and correspondingly fewer cylinders (on-disk info from its UFS format reports 527 cylinders, 32 heads, 63 sectors). Somehow, this caused issues that resulted in our FUSE driver not being able to write to the disk without the kernel being *really* mad about the results. I have yet to investigate this properly, disks that the kernel doesn't think have 32 heads work fine. It's noteworthy that later kernels (such as SVr4.2 in UnixWare 1.0) refuse to boot if they detect more than 16 heads. Perhaps it would work if I set 86box to use 32 heads for that profile but I haven't tested it yet.

@@ -4,11 +4,12 @@ import argparse
 import json
 import shutil
 from pathlib import Path
+from typing import Any
 
 from host_tools.fs.bfs import format_bfs_filesystem
 
 from .create import RawDiskGeometry, create_raw_image_skeleton
-from .inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes
+from .inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes, resolve_guest_visible_sector
 from .structures import DiskImageReport, MbrInfo, PartitionEntry, PdInfo, SliceFilesystem, VtocInfo, VtocPartition
 from .svr4 import PARTITION_TAG_NAMES, partition_tag_name
 
@@ -40,8 +41,14 @@ def build_parser() -> argparse.ArgumentParser:
         '--slice',
         action='append',
         default=[],
-        help='Slice definition as index:tag:start:size:flag where tag may be numeric or a known name like root, swap, stand, boot, backup, alts.',
+        help='Slice definition as index:tag:start:size:flag where start is an absolute disk sector and tag may be numeric or a known name like root, swap, stand, boot, backup, alts.',
     )
+
+    trace_parser = subparsers.add_parser('trace-sector', help='Resolve a slice-relative sector through the guest-visible disk path and print a small fingerprint.')
+    trace_parser.add_argument('image', help='Path to the disk image to inspect.')
+    trace_parser.add_argument('--slice', required=True, help='Slice index or tag name, for example 1 or root.')
+    trace_parser.add_argument('--sector', required=True, type=int, help='Slice-relative sector number to resolve.')
+    trace_parser.add_argument('--json', action='store_true', help='Emit machine-readable JSON.')
 
     return parser
 
@@ -196,6 +203,15 @@ def print_report(report: DiskImageReport) -> None:
             print(f'  - {note}')
 
 
+def _sector_fingerprint(data: bytes) -> dict[str, str | int]:
+    preview = data[:32]
+    return {
+        'size': len(data),
+        'hex_preview': preview.hex(),
+        'ascii_preview': ''.join(chr(byte) if 32 <= byte < 127 else '.' for byte in preview),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -221,6 +237,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == 'create-skeleton':
         create_skeleton(args)
+        return 0
+
+    if args.command == 'trace-sector':
+        absolute_sector, guest_visible_sector, data = resolve_guest_visible_sector(
+            Path(args.image).resolve(),
+            args.slice,
+            args.sector,
+        )
+        payload: dict[str, Any] = {
+            'slice': args.slice,
+            'slice_relative_sector': args.sector,
+            'absolute_sector': absolute_sector,
+            'guest_visible_sector': guest_visible_sector,
+            'fingerprint': _sector_fingerprint(data),
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"slice={payload['slice']} sector={payload['slice_relative_sector']}")
+            print(f"absolute_sector={payload['absolute_sector']}")
+            print(f"guest_visible_sector={payload['guest_visible_sector']}")
+            print(f"size={payload['fingerprint']['size']}")
+            print(f"hex_preview={payload['fingerprint']['hex_preview']}")
+            print(f"ascii_preview={payload['fingerprint']['ascii_preview']}")
         return 0
 
     parser.error(f'unsupported command {args.command!r}')
