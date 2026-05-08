@@ -6,6 +6,19 @@ from pathlib import Path
 from .structures import HDPDLOC, SECTOR_SIZE, UNIXWARE_PARTITION_TYPE, VALID_PD, VTOC_SANE, PartitionEntry, VtocPartition
 
 
+ALT_SANITY = 0xDEADBEEF
+ALT_VERSION = 0x02
+MAX_ALTENTS = 253
+
+
+MAX_CHS_CYLINDERS = 1024
+MAX_KERNEL_CHS_HEADS = 16
+MAX_CHS_SECTORS_PER_TRACK = 63
+ACTIVE_PARTITION_CHAINLOADER_MBR = bytes.fromhex(
+    '31c0fa8ed0bc007c8ec08ed8fb89e6bf0006b90002fcf3a4ea1d060000b004bebe07803c80740c83c610fec875f4beac06eb3289f78b148b4c02bd0500bb007cb80102cd13730c31c0cd134d75efbe9406eb12813efe7d55aa750789feea007c0000be7306ac08c07406b40ecd10ebf5fbebfe496e76616c696420706172746974696f6e20626f6f74207369676e6174757265004572726f722072656164696e6720626f6f747374726170004e6f2061637469766520706172746974696f6e206f6e2068617264206469736b00'
+)
+
+
 @dataclass(frozen=True)
 class RawDiskGeometry:
     cylinders: int
@@ -20,6 +33,19 @@ class RawDiskGeometry:
 def validate_geometry(geometry: RawDiskGeometry) -> None:
     if geometry.cylinders <= 0 or geometry.heads <= 0 or geometry.sectors_per_track <= 0:
         raise SystemExit('error: disk geometry values must all be positive')
+    if geometry.cylinders > MAX_CHS_CYLINDERS:
+        raise SystemExit(f'error: disk geometry exceeds CHS cylinder limit ({geometry.cylinders} > {MAX_CHS_CYLINDERS})')
+    if geometry.heads > MAX_KERNEL_CHS_HEADS:
+        raise SystemExit(f'error: disk geometry exceeds kernel head limit ({geometry.heads} > {MAX_KERNEL_CHS_HEADS})')
+    if geometry.sectors_per_track > MAX_CHS_SECTORS_PER_TRACK:
+        raise SystemExit(
+            f'error: disk geometry exceeds CHS sector-per-track limit '
+            f'({geometry.sectors_per_track} > {MAX_CHS_SECTORS_PER_TRACK})'
+        )
+
+
+def max_chs_lba(geometry: RawDiskGeometry) -> int:
+    return geometry.total_sectors - 1
 
 
 def validate_unix_partition(total_sectors: int, unix_partition_start: int, unix_partition_size: int) -> None:
@@ -57,10 +83,12 @@ def validate_vtoc_partitions(
 def encode_chs(lba: int, geometry: RawDiskGeometry) -> bytes:
     if lba <= 0:
         return bytes([0, 0, 0])
+    if lba > max_chs_lba(geometry):
+        raise SystemExit(f'error: LBA {lba} is outside the CHS-addressable disk geometry')
     sectors_per_cylinder = geometry.heads * geometry.sectors_per_track
-    cylinder = min(lba // sectors_per_cylinder, 1023)
+    cylinder = lba // sectors_per_cylinder
     temp = lba % sectors_per_cylinder
-    head = min(temp // geometry.sectors_per_track, 254)
+    head = temp // geometry.sectors_per_track
     sector = (temp % geometry.sectors_per_track) + 1
     sector_byte = (sector & 0x3F) | ((cylinder >> 2) & 0xC0)
     return bytes([head & 0xFF, sector_byte & 0xFF, cylinder & 0xFF])
@@ -80,8 +108,18 @@ def serialize_partition_entry(partition: PartitionEntry, geometry: RawDiskGeomet
     )
 
 
-def build_mbr(geometry: RawDiskGeometry, unix_partition_start: int, unix_partition_size: int) -> bytes:
+def build_mbr(
+    geometry: RawDiskGeometry,
+    unix_partition_start: int,
+    unix_partition_size: int,
+    *,
+    boot_code: bytes | None = None,
+) -> bytes:
     sector = bytearray(SECTOR_SIZE)
+    if boot_code is not None:
+        if len(boot_code) > 446:
+            raise SystemExit(f'error: MBR boot code is too large ({len(boot_code)} > 446 bytes)')
+        sector[:len(boot_code)] = boot_code
     sector[446:462] = serialize_partition_entry(
         PartitionEntry(
             index=1,
@@ -120,13 +158,33 @@ def build_vtoc(volume: str, partitions: list[VtocPartition]) -> bytes:
     block[0:4] = VTOC_SANE.to_bytes(4, 'little', signed=False)
     block[4:8] = (1).to_bytes(4, 'little', signed=False)
     block[8:16] = volume.encode('ascii', errors='replace')[:8].ljust(8, b'\0')
-    block[16:18] = len(partitions).to_bytes(2, 'little', signed=False)
+    partition_count = (max((partition.index for partition in partitions), default=-1) + 1)
+    block[16:18] = partition_count.to_bytes(2, 'little', signed=False)
     for partition in partitions:
         entry_offset = 60 + (partition.index * 12)
         block[entry_offset:entry_offset + 2] = partition.tag.to_bytes(2, 'little', signed=False)
         block[entry_offset + 2:entry_offset + 4] = partition.flag.to_bytes(2, 'little', signed=False)
         block[entry_offset + 4:entry_offset + 8] = partition.start_sector.to_bytes(4, 'little', signed=True)
         block[entry_offset + 8:entry_offset + 12] = partition.sector_count.to_bytes(4, 'little', signed=True)
+    return bytes(block)
+
+
+def build_empty_alt_info() -> bytes:
+    block = bytearray(2048)
+    block[0:4] = ALT_SANITY.to_bytes(4, 'little', signed=False)
+    block[4:6] = ALT_VERSION.to_bytes(2, 'little', signed=False)
+    block[6:8] = (0).to_bytes(2, 'little', signed=False)
+
+    track_table_offset = 8
+    sector_table_offset = track_table_offset + 8 + (MAX_ALTENTS * 4)
+
+    block[track_table_offset:track_table_offset + 2] = (0).to_bytes(2, 'little', signed=False)
+    block[track_table_offset + 2:track_table_offset + 4] = (0).to_bytes(2, 'little', signed=False)
+    block[track_table_offset + 4:track_table_offset + 8] = (0).to_bytes(4, 'little', signed=True)
+
+    block[sector_table_offset:sector_table_offset + 2] = (0).to_bytes(2, 'little', signed=False)
+    block[sector_table_offset + 2:sector_table_offset + 4] = (0).to_bytes(2, 'little', signed=False)
+    block[sector_table_offset + 4:sector_table_offset + 8] = (0).to_bytes(4, 'little', signed=True)
     return bytes(block)
 
 
@@ -137,6 +195,7 @@ def create_raw_image_skeleton(
     unix_partition_size: int,
     volume: str,
     slices: list[VtocPartition],
+    mbr_boot_code: bytes | None = None,
 ) -> None:
     validate_geometry(geometry)
     validate_unix_partition(geometry.total_sectors, unix_partition_start, unix_partition_size)
@@ -144,12 +203,18 @@ def create_raw_image_skeleton(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image = bytearray(geometry.total_sectors * SECTOR_SIZE)
-    image[0:SECTOR_SIZE] = build_mbr(geometry, unix_partition_start, unix_partition_size)
+    image[0:SECTOR_SIZE] = build_mbr(
+        geometry,
+        unix_partition_start,
+        unix_partition_size,
+        boot_code=mbr_boot_code,
+    )
 
     vtoc_ptr = (HDPDLOC * SECTOR_SIZE) + 100
     vtoc_len = 316
     alt_ptr = 30 * SECTOR_SIZE
-    alt_len = 0
+    alt_info = build_empty_alt_info()
+    alt_len = len(alt_info)
 
     pdinfo_sector = unix_partition_start + HDPDLOC
     image[pdinfo_sector * SECTOR_SIZE:(pdinfo_sector + 1) * SECTOR_SIZE] = build_pdinfo(
@@ -167,4 +232,11 @@ def create_raw_image_skeleton(
     if image_offset + len(vtoc_block) > len(image):
         raise SystemExit('error: VTOC metadata does not fit inside the declared disk geometry')
     image[image_offset:image_offset + len(vtoc_block)] = vtoc_block
+
+    alt_sector = unix_partition_start + (alt_ptr // SECTOR_SIZE)
+    alt_offset = alt_ptr % SECTOR_SIZE
+    alt_image_offset = (alt_sector * SECTOR_SIZE) + alt_offset
+    if alt_image_offset + len(alt_info) > len(image):
+        raise SystemExit('error: alternates metadata does not fit inside the declared disk geometry')
+    image[alt_image_offset:alt_image_offset + len(alt_info)] = alt_info
     output_path.write_bytes(image)

@@ -11,6 +11,7 @@ import trio
 
 from host_tools.fs.bfs import build_bfs_filesystem_image, detect_bfs, read_bfs_path_bytes
 from host_tools.fs.bfs_fuse import BFSOperations, BFSVolume, make_test_context
+from host_tools.fs.common import BFS_DIRENT_SIZE, BFS_SUPER_SIZE, u16, u32
 
 
 def build_test_filesystem() -> tuple[bytearray, object]:
@@ -90,6 +91,34 @@ class BFSFuseFrontendTests(unittest.TestCase):
             await operations.release(file_info.fh)
 
         trio.run(scenario)
+
+    def test_bfs_inode_layout_matches_verified_disk_format(self) -> None:
+        image, filesystem = build_test_filesystem()
+        _inode_number, inode, payload = read_bfs_path_bytes(bytes(image), filesystem, '/unix')
+
+        self.assertEqual(payload, b'kernel payload')
+        self.assertEqual(inode['mode'], 0o644)
+        self.assertEqual(inode['uid'], 0)
+        self.assertEqual(inode['gid'], 0)
+        self.assertEqual(inode['nlink'], 1)
+
+        root_raw = bytes(image[BFS_SUPER_SIZE:BFS_SUPER_SIZE + BFS_DIRENT_SIZE])
+        file_raw = bytes(image[BFS_SUPER_SIZE + BFS_DIRENT_SIZE:BFS_SUPER_SIZE + (2 * BFS_DIRENT_SIZE)])
+
+        self.assertEqual(len(root_raw), 64)
+        self.assertEqual(u16(root_raw, 0), 2)
+        self.assertEqual(u32(root_raw, 16), 2)
+        self.assertEqual(u32(root_raw, 20), 0o755)
+        self.assertEqual(u32(root_raw, 24), 0)
+        self.assertEqual(u32(root_raw, 28), 0)
+        self.assertEqual(u32(root_raw, 32), 2)
+
+        self.assertEqual(u16(file_raw, 0), 3)
+        self.assertEqual(u32(file_raw, 16), 1)
+        self.assertEqual(u32(file_raw, 20), 0o644)
+        self.assertEqual(u32(file_raw, 24), 0)
+        self.assertEqual(u32(file_raw, 28), 0)
+        self.assertEqual(u32(file_raw, 32), 1)
 
     def test_readdir_pagination_does_not_repeat_names(self) -> None:
         async def scenario() -> None:

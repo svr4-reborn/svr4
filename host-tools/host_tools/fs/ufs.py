@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
 from .common import FilesystemCandidate, SECTOR_SIZE, UFS_NDADDR, UFS_ROOT_INODE
 from .ufs_directory import UFS_DIRBLKSIZ, UFSDirectoryEntry, UFSDirectoryInsertSlot, decode_ufs_directory_entry, encode_ufs_directory_entry, find_ufs_directory_insert_slot, insert_ufs_directory_entry, iter_ufs_directory_records, remove_ufs_directory_entry, rewrite_ufs_directory_entry_inode, ufs_dirsiz
-from .ufs_lowlevel import ImageBuffer, MAXCPG, MAXFRAG, MAXIPG, NBBY, NRPOS, UFS_CG_B_OFFSET, UFS_CG_BTOT_OFFSET, UFS_CG_CGX_OFFSET, UFS_CG_CS_NBFREE_OFFSET, UFS_CG_CS_NDIR_OFFSET, UFS_CG_CS_NIFREE_OFFSET, UFS_CG_FROTOR_OFFSET, UFS_CG_FRSUM_OFFSET, UFS_CG_FREE_OFFSET, UFS_CG_IROTOR_OFFSET, UFS_CG_IUSED_OFFSET, UFS_CG_MAGIC, UFS_CG_MAGIC_OFFSET, UFS_CG_NCYL_OFFSET, UFS_CG_NDBLK_OFFSET, UFS_CG_NIBLK_OFFSET, UFS_CG_ROTOR_OFFSET, UFS_CG_TIME_OFFSET, UFS_DINODE_SIZE, UFS_DI_ATIME_OFFSET, UFS_DI_BLOCKS_OFFSET, UFS_DI_CTIME_OFFSET, UFS_DI_DB_OFFSET, UFS_DI_EFTFLAG_OFFSET, UFS_DI_FLAGS_OFFSET, UFS_DI_GEN_OFFSET, UFS_DI_GID_OFFSET, UFS_DI_IB_OFFSET, UFS_DI_MODE_OFFSET, UFS_DI_MTIME_OFFSET, UFS_DI_NLINK_OFFSET, UFS_DI_SGID_OFFSET, UFS_DI_SIZE_OFFSET, UFS_DI_SUID_OFFSET, UFS_DI_UID_OFFSET, UFS_EFT_MAGIC, UFS_FS_BSIZE_OFFSET, UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_CSTOTAL_NBFREE_OFFSET, UFS_FS_CSTOTAL_NDIR_OFFSET, UFS_FS_CSTOTAL_NIFREE_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_FS_MINFREE_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NINDIR_OFFSET, UFS_IFDIR, UFS_IFLNK, UFS_IFMT, UFS_IFREG, UFS_MAGIC, UFS_SB_OFFSET, UFS_SB_SIZE, adjust_cg_directory_count, adjust_cg_free_blocks, adjust_cg_free_inodes, adjust_superblock_directory_count, adjust_superblock_free_blocks, adjust_superblock_free_inodes, allocate_ufs_allocation, allocate_ufs_block, allocate_ufs_fragments, allocate_ufs_inode, cg_block_offset, clear_ufs_inode, collect_indirect_data_blocks, collect_indirect_pointer_blocks, detect_ufs as detect_ufs_lowlevel, free_ufs_allocation, free_ufs_block, free_ufs_inode, i32, initialize_ufs_inode, is_frag_free, is_ufs_inode_used, read_cg_block, read_ufs_file, read_ufs_inode, read_ufs_pointer_block, set_frag_state, set_ufs_inode_state, u16, u32, ufs_allocation_byte_sizes, ufs_blkstofrags, ufs_cgbase, ufs_cgdmin, ufs_cgimin, ufs_cgstart, ufs_cgtod, ufs_data_block_offset, ufs_file_type, ufs_fragroundup, ufs_fsbtobytes, ufs_inode_byte_offset, ufs_inode_data_blocks, ufs_inode_offset, ufs_inode_pointer_blocks, ufs_is_directory, ufs_is_symlink, ufs_itod, ufs_itog, ufs_itoo, ufs_path_components, write_cg_block, write_ufs_block_lists, write_ufs_inode_blocks, write_ufs_inode_mode, write_ufs_inode_nlink, write_ufs_inode_size, write_ufs_inode_time, write_ufs_inode_times, write_ufs_inode_uid_gid, write_ufs_pointer_block
+from .ufs_lowlevel import ImageBuffer, MAXCPG, MAXFRAG, MAXIPG, NBBY, NRPOS, UFS_CG_B_OFFSET, UFS_CG_BTOT_OFFSET, UFS_CG_CGX_OFFSET, UFS_CG_CS_NBFREE_OFFSET, UFS_CG_CS_NDIR_OFFSET, UFS_CG_CS_NIFREE_OFFSET, UFS_CG_FROTOR_OFFSET, UFS_CG_FRSUM_OFFSET, UFS_CG_FREE_OFFSET, UFS_CG_IROTOR_OFFSET, UFS_CG_IUSED_OFFSET, UFS_CG_MAGIC, UFS_CG_MAGIC_OFFSET, UFS_CG_NCYL_OFFSET, UFS_CG_NDBLK_OFFSET, UFS_CG_NIBLK_OFFSET, UFS_CG_ROTOR_OFFSET, UFS_CG_TIME_OFFSET, UFS_DINODE_SIZE, UFS_DI_ATIME_OFFSET, UFS_DI_BLOCKS_OFFSET, UFS_DI_CTIME_OFFSET, UFS_DI_DB_OFFSET, UFS_DI_EFTFLAG_OFFSET, UFS_DI_FLAGS_OFFSET, UFS_DI_GEN_OFFSET, UFS_DI_GID_OFFSET, UFS_DI_IB_OFFSET, UFS_DI_MODE_OFFSET, UFS_DI_MTIME_OFFSET, UFS_DI_NLINK_OFFSET, UFS_DI_SGID_OFFSET, UFS_DI_SIZE_OFFSET, UFS_DI_SUID_OFFSET, UFS_DI_UID_OFFSET, UFS_EFT_MAGIC, UFS_FS_BSIZE_OFFSET, UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_CSADDR_OFFSET, UFS_FS_CSSIZE_OFFSET, UFS_FS_CSTOTAL_NBFREE_OFFSET, UFS_FS_CSTOTAL_NDIR_OFFSET, UFS_FS_CSTOTAL_NIFREE_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_DSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_FS_MINFREE_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NCYL_OFFSET, UFS_FS_NINDIR_OFFSET, UFS_FS_NSECT_OFFSET, UFS_FS_NSPF_OFFSET, UFS_FS_SPC_OFFSET, UFS_IFDIR, UFS_IFLNK, UFS_IFMT, UFS_IFREG, UFS_MAGIC, UFS_SB_OFFSET, UFS_SB_SIZE, adjust_cg_directory_count, adjust_cg_free_blocks, adjust_cg_free_inodes, adjust_superblock_directory_count, adjust_superblock_free_blocks, adjust_superblock_free_inodes, allocate_ufs_allocation, allocate_ufs_block, allocate_ufs_fragments, allocate_ufs_inode, cg_block_offset, clear_ufs_inode, collect_indirect_data_blocks, collect_indirect_pointer_blocks, detect_ufs as detect_ufs_lowlevel, free_ufs_allocation, free_ufs_block, free_ufs_inode, i32, initialize_ufs_inode, is_frag_free, is_ufs_inode_used, read_cg_block, read_ufs_file, read_ufs_inode, read_ufs_pointer_block, set_frag_state, set_ufs_inode_state, u16, u32, ufs_allocation_byte_sizes, ufs_blkstofrags, ufs_cgbase, ufs_cgdmin, ufs_cgimin, ufs_cgstart, ufs_cgtod, ufs_data_block_offset, ufs_file_type, ufs_fragroundup, ufs_fsbtobytes, ufs_inode_byte_offset, ufs_inode_data_blocks, ufs_inode_offset, ufs_inode_pointer_blocks, ufs_is_directory, ufs_is_symlink, ufs_itod, ufs_itog, ufs_itoo, ufs_path_components, write_cg_block, write_ufs_block_lists, write_ufs_inode_blocks, write_ufs_inode_mode, write_ufs_inode_nlink, write_ufs_inode_size, write_ufs_inode_time, write_ufs_inode_times, write_ufs_inode_uid_gid, write_ufs_pointer_block
 
 
 _UFS_CG_BLOCK_ALLOCATION_HINTS: dict[tuple[int, int, int, int], int] = {}
@@ -14,6 +15,31 @@ _UFS_METADATA_NORMALIZATION_STATE: set[tuple[int, int, int]] = set()
 UFS_FS_CSTOTAL_NFFREE_OFFSET = 204
 UFS_CG_CS_NFFREE_OFFSET = 36
 UFS_CSUM_SIZE = 16
+UFS_FS_SBLKNO_OFFSET = 8
+UFS_FS_TIME_OFFSET = 32
+UFS_FS_SIZE_OFFSET = 36
+UFS_FS_ROTDLY_OFFSET = 64
+UFS_FS_RPS_OFFSET = 68
+UFS_FS_BMASK_OFFSET = 72
+UFS_FS_FMASK_OFFSET = 76
+UFS_FS_BSHIFT_OFFSET = 80
+UFS_FS_FSHIFT_OFFSET = 84
+UFS_FS_MAXCONTIG_OFFSET = 88
+UFS_FS_MAXBPG_OFFSET = 92
+UFS_FS_FRAGSHIFT_OFFSET = 96
+UFS_FS_SBSIZE_OFFSET = 104
+UFS_FS_CSMASK_OFFSET = 108
+UFS_FS_CSSHIFT_OFFSET = 112
+UFS_FS_OPTIM_OFFSET = 128
+UFS_FS_STATE_OFFSET = 132
+UFS_FS_CGSIZE_OFFSET = 160
+UFS_FS_NTRAK_OFFSET = 164
+UFS_FS_CPG_OFFSET = 180
+UFS_FS_FMOD_OFFSET = 208
+UFS_FS_CLEAN_OFFSET = 209
+UFS_FS_RONLY_OFFSET = 210
+
+UFS_FS_OKAY = 0x7C269D38
 
 
 def detect_ufs(image: ImageBuffer) -> list[FilesystemCandidate]:
@@ -162,6 +188,225 @@ def build_ufs_directory_block(self_inode_number: int, parent_inode_number: int) 
     dot = encode_ufs_directory_entry(self_inode_number, '.', ufs_dirsiz('.'))
     dotdot = encode_ufs_directory_entry(parent_inode_number, '..', UFS_DIRBLKSIZ - len(dot))
     return dot + dotdot
+
+
+def _u32_mask(value: int) -> int:
+    return value & 0xFFFFFFFF
+
+
+def _power_of_two_shift(value: int) -> int:
+    if value <= 0 or value & (value - 1):
+        raise SystemExit(f'error: expected a positive power-of-two value, got {value}')
+    return value.bit_length() - 1
+
+
+def _align_up(value: int, alignment: int) -> int:
+    if alignment <= 0:
+        return value
+    return ((value + alignment - 1) // alignment) * alignment
+
+
+def build_ufs_filesystem_image(
+    image_size: int,
+    *,
+    timestamp: int = 0,
+    block_size: int = 8192,
+    fragment_size: int = SECTOR_SIZE,
+    inode_block_count: int = 4,
+    summary_block_number: int = 4,
+    cylinder_group_block_number: int = 5,
+    inode_block_number: int = 6,
+    tracks_per_cylinder: int | None = None,
+    sectors_per_track: int | None = None,
+) -> tuple[bytearray, FilesystemCandidate]:
+    if image_size <= 0 or image_size % SECTOR_SIZE != 0:
+        raise SystemExit('error: UFS image size must be a positive multiple of 512 bytes')
+    if block_size < 4096 or block_size > UFS_SB_SIZE:
+        raise SystemExit('error: UFS block size must be between 4096 and 8192 bytes')
+    if fragment_size != SECTOR_SIZE:
+        raise SystemExit('error: the current UFS formatter only supports 512-byte fragments')
+    if block_size % fragment_size != 0:
+        raise SystemExit('error: UFS block size must be a whole multiple of the fragment size')
+    if inode_block_count <= 0:
+        raise SystemExit('error: inode_block_count must be positive')
+    if (tracks_per_cylinder is None) != (sectors_per_track is None):
+        raise SystemExit('error: tracks_per_cylinder and sectors_per_track must be specified together')
+    if tracks_per_cylinder is not None and tracks_per_cylinder <= 0:
+        raise SystemExit('error: tracks_per_cylinder must be positive')
+    if sectors_per_track is not None and sectors_per_track <= 0:
+        raise SystemExit('error: sectors_per_track must be positive')
+
+    fragments_per_block = block_size // fragment_size
+    block_shift = _power_of_two_shift(fragments_per_block)
+    summary_frag_number = summary_block_number << block_shift
+    cylinder_group_frag_number = cylinder_group_block_number << block_shift
+    inode_frag_number = inode_block_number << block_shift
+    data_frag_number = (inode_block_number + inode_block_count) << block_shift
+    required_bytes = (data_frag_number + fragments_per_block) * fragment_size
+    if image_size < required_bytes:
+        raise SystemExit(f'error: UFS slice is too small ({image_size} bytes); need at least {required_bytes} bytes')
+
+    fsbtodb = _power_of_two_shift(fragment_size // SECTOR_SIZE)
+    bshift = _power_of_two_shift(block_size)
+    fshift = _power_of_two_shift(fragment_size)
+    fragshift = _power_of_two_shift(fragments_per_block)
+    inodes_per_block = block_size // UFS_DINODE_SIZE
+    inodes_per_group = inode_block_count * inodes_per_block
+    if inodes_per_group > MAXIPG:
+        raise SystemExit(f'error: UFS inode layout exceeds MAXIPG ({inodes_per_group} > {MAXIPG})')
+
+    total_fragments = image_size // fragment_size
+    if tracks_per_cylinder is None or sectors_per_track is None:
+        tracks_per_cylinder = 1
+        sectors_per_track = block_size // SECTOR_SIZE
+        total_cylinders = 1
+        cylinders_per_group = 1
+        cylinder_groups = 1
+        fragments_per_group = total_fragments
+    else:
+        sectors_per_cylinder = tracks_per_cylinder * sectors_per_track
+        if total_fragments % sectors_per_cylinder != 0:
+            raise SystemExit('error: UFS slice size must be an exact whole number of cylinders')
+        total_cylinders = total_fragments // sectors_per_cylinder
+        if total_cylinders <= 0:
+            raise SystemExit('error: UFS slice must contain at least one cylinder')
+        max_cg_data_fragments = (block_size - UFS_CG_FREE_OFFSET) * NBBY
+        max_cylinders_per_group = max_cg_data_fragments // sectors_per_cylinder
+        if max_cylinders_per_group <= 0:
+            raise SystemExit('error: UFS cylinder-group bitmap cannot represent even one cylinder with this geometry')
+        cylinders_per_group = min(total_cylinders, MAXCPG, max_cylinders_per_group)
+        cylinder_groups = (total_cylinders + cylinders_per_group - 1) // cylinders_per_group
+        fragments_per_group = cylinders_per_group * sectors_per_cylinder
+
+    summary_bytes = cylinder_groups * UFS_CSUM_SIZE
+    summary_fragments = _align_up(summary_bytes, fragment_size) // fragment_size
+    if summary_frag_number + summary_fragments > cylinder_group_frag_number:
+        raise SystemExit('error: UFS cylinder summary area overlaps the cylinder group block')
+
+    image = bytearray(image_size)
+    filesystem = FilesystemCandidate(
+        kind='ufs',
+        start_offset=0,
+        super_offset=UFS_SB_OFFSET,
+        block_size=block_size,
+        details={
+            'bsize': block_size,
+            'fsize': fragment_size,
+            'frag': fragments_per_block,
+            'dsize': total_fragments,
+            'ipg': inodes_per_group,
+            'fpg': fragments_per_group,
+            'inopb': inodes_per_block,
+            'fsbtodb': fsbtodb,
+            'cgoffset': 0,
+            'cgmask': 0,
+            'cblkno': cylinder_group_frag_number,
+            'iblkno': inode_frag_number,
+            'dblkno': data_frag_number,
+            'ncg': cylinder_groups,
+            'minfree': 0,
+            'fragshift': fragshift,
+            'nindir': block_size // 4,
+            'nspf': fragment_size // SECTOR_SIZE,
+            'csaddr': summary_frag_number,
+            'cssize': summary_bytes,
+            'nsect': sectors_per_track,
+            'spc': tracks_per_cylinder * sectors_per_track,
+            'ncyl': total_cylinders,
+            'cpg': cylinders_per_group,
+            'ntrak': tracks_per_cylinder,
+        },
+    )
+
+    super_offset = filesystem.super_offset
+    image[super_offset + UFS_FS_SBLKNO_OFFSET:super_offset + UFS_FS_SBLKNO_OFFSET + 4] = (UFS_SB_OFFSET // fragment_size).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CBLKNO_OFFSET:super_offset + UFS_FS_CBLKNO_OFFSET + 4] = cylinder_group_frag_number.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_IBLKNO_OFFSET:super_offset + UFS_FS_IBLKNO_OFFSET + 4] = inode_frag_number.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_DBLKNO_OFFSET:super_offset + UFS_FS_DBLKNO_OFFSET + 4] = data_frag_number.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CGOFFSET_OFFSET:super_offset + UFS_FS_CGOFFSET_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CGMASK_OFFSET:super_offset + UFS_FS_CGMASK_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_TIME_OFFSET:super_offset + UFS_FS_TIME_OFFSET + 4] = timestamp.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_SIZE_OFFSET:super_offset + UFS_FS_SIZE_OFFSET + 4] = total_fragments.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_DSIZE_OFFSET:super_offset + UFS_FS_DSIZE_OFFSET + 4] = total_fragments.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_NCG_OFFSET:super_offset + UFS_FS_NCG_OFFSET + 4] = cylinder_groups.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_BSIZE_OFFSET:super_offset + UFS_FS_BSIZE_OFFSET + 4] = block_size.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FSIZE_OFFSET:super_offset + UFS_FS_FSIZE_OFFSET + 4] = fragment_size.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FRAG_OFFSET:super_offset + UFS_FS_FRAG_OFFSET + 4] = fragments_per_block.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_MINFREE_OFFSET:super_offset + UFS_FS_MINFREE_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_ROTDLY_OFFSET:super_offset + UFS_FS_ROTDLY_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_RPS_OFFSET:super_offset + UFS_FS_RPS_OFFSET + 4] = (60).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_BMASK_OFFSET:super_offset + UFS_FS_BMASK_OFFSET + 4] = _u32_mask(-(block_size)).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FMASK_OFFSET:super_offset + UFS_FS_FMASK_OFFSET + 4] = _u32_mask(-(fragment_size)).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_BSHIFT_OFFSET:super_offset + UFS_FS_BSHIFT_OFFSET + 4] = bshift.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FSHIFT_OFFSET:super_offset + UFS_FS_FSHIFT_OFFSET + 4] = fshift.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_MAXCONTIG_OFFSET:super_offset + UFS_FS_MAXCONTIG_OFFSET + 4] = (1).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_MAXBPG_OFFSET:super_offset + UFS_FS_MAXBPG_OFFSET + 4] = (
+        max((fragments_per_group - data_frag_number) // fragments_per_block, 0)
+    ).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FRAGSHIFT_OFFSET:super_offset + UFS_FS_FRAGSHIFT_OFFSET + 4] = fragshift.to_bytes(4, 'little', signed=True)
+    image[super_offset + UFS_FS_FSBTODB_OFFSET:super_offset + UFS_FS_FSBTODB_OFFSET + 4] = fsbtodb.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_SBSIZE_OFFSET:super_offset + UFS_FS_SBSIZE_OFFSET + 4] = UFS_SB_SIZE.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CSMASK_OFFSET:super_offset + UFS_FS_CSMASK_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CSSHIFT_OFFSET:super_offset + UFS_FS_CSSHIFT_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_NINDIR_OFFSET:super_offset + UFS_FS_NINDIR_OFFSET + 4] = (block_size // 4).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_INOPB_OFFSET:super_offset + UFS_FS_INOPB_OFFSET + 4] = inodes_per_block.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_NSPF_OFFSET:super_offset + UFS_FS_NSPF_OFFSET + 4] = (fragment_size // SECTOR_SIZE).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_OPTIM_OFFSET:super_offset + UFS_FS_OPTIM_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_STATE_OFFSET:super_offset + UFS_FS_STATE_OFFSET + 4] = (UFS_FS_OKAY - timestamp).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CSADDR_OFFSET:super_offset + UFS_FS_CSADDR_OFFSET + 4] = summary_frag_number.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CSSIZE_OFFSET:super_offset + UFS_FS_CSSIZE_OFFSET + 4] = summary_bytes.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CGSIZE_OFFSET:super_offset + UFS_FS_CGSIZE_OFFSET + 4] = block_size.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_NTRAK_OFFSET:super_offset + UFS_FS_NTRAK_OFFSET + 4] = tracks_per_cylinder.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_NSECT_OFFSET:super_offset + UFS_FS_NSECT_OFFSET + 4] = sectors_per_track.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_SPC_OFFSET:super_offset + UFS_FS_SPC_OFFSET + 4] = (tracks_per_cylinder * sectors_per_track).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_NCYL_OFFSET:super_offset + UFS_FS_NCYL_OFFSET + 4] = total_cylinders.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CPG_OFFSET:super_offset + UFS_FS_CPG_OFFSET + 4] = cylinders_per_group.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_IPG_OFFSET:super_offset + UFS_FS_IPG_OFFSET + 4] = inodes_per_group.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FPG_OFFSET:super_offset + UFS_FS_FPG_OFFSET + 4] = fragments_per_group.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_MAGIC_OFFSET:super_offset + UFS_FS_MAGIC_OFFSET + 4] = UFS_MAGIC.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_FMOD_OFFSET] = 0
+    image[super_offset + UFS_FS_CLEAN_OFFSET] = 1
+    image[super_offset + UFS_FS_RONLY_OFFSET] = 0
+
+    for cg in range(cylinder_groups):
+        cg_bytes = initialize_pristine_ufs_cg(image, filesystem, cg)
+        if cg == 0:
+            set_ufs_inode_state(cg_bytes, UFS_ROOT_INODE, used=True)
+            write_cg_block(image, filesystem, cg, cg_bytes)
+
+    initialize_ufs_inode(image, filesystem, UFS_ROOT_INODE, UFS_IFDIR | 0o755, nlink=2, timestamp=timestamp)
+    root_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, UFS_ROOT_INODE)
+    if root_inode is None:
+        raise SystemExit('error: failed to initialize the UFS root inode')
+    apply_ufs_inode_replacement(
+        image,
+        filesystem,
+        UFS_ROOT_INODE,
+        root_inode,
+        build_ufs_directory_block(UFS_ROOT_INODE, UFS_ROOT_INODE),
+        target_path='/',
+    )
+    recompute_ufs_summary_counts(image, filesystem)
+    return image, filesystem
+
+
+def format_ufs_filesystem(
+    image: bytearray,
+    *,
+    timestamp: int = 0,
+    block_size: int = 8192,
+    tracks_per_cylinder: int | None = None,
+    sectors_per_track: int | None = None,
+) -> FilesystemCandidate:
+    formatted, filesystem = build_ufs_filesystem_image(
+        len(image),
+        timestamp=timestamp,
+        block_size=block_size,
+        tracks_per_cylinder=tracks_per_cylinder,
+        sectors_per_track=sectors_per_track,
+    )
+    image[:] = formatted
+    return filesystem
 
 
 def read_ufs_pointer_block(image: ImageBuffer, filesystem: FilesystemCandidate, fs_block: int) -> list[int]:
@@ -1707,7 +1952,9 @@ def add_ufs_directory_entry(
         except ValueError:
             continue
         return apply_ufs_inode_write(image, filesystem, directory_inode_number, directory_inode, block_offset, updated_block)
-    raise SystemExit(f'error: no directory slot available for {entry_name!r}')
+
+    new_block = insert_ufs_directory_entry(b'', 0, child_inode_number, entry_name)
+    return apply_ufs_inode_write(image, filesystem, directory_inode_number, directory_inode, rounded_length, new_block)
 
 
 def delete_ufs_directory_entry(

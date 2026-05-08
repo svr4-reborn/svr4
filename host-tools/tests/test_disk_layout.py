@@ -5,13 +5,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pyfuse3
 import trio
 
 
 from host_tools.disk.cli import format_bfs_path
-from host_tools.disk.create import RawDiskGeometry, create_raw_image_skeleton
+from host_tools.disk.create import ACTIVE_PARTITION_CHAINLOADER_MBR, RawDiskGeometry, create_raw_image_skeleton
 from host_tools.disk.fsprobe import select_slice_filesystem
 from host_tools.disk.inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes, resolve_guest_visible_sector
 from host_tools.disk.structures import AltInfo, AltTableInfo, PdInfo, VtocPartition
@@ -19,15 +20,52 @@ from host_tools.disk.svr4 import ALT_SANITY, ALT_VERSION, is_valid_alt_info, par
 from host_tools.fs.bfs import read_bfs_path_bytes
 from host_tools.fs.bfs_fuse import BFSOperations, BFSVolume, make_test_context as make_bfs_test_context
 from host_tools.fs.common import BFS_MAGIC, UFS_DINODE_SIZE
-from host_tools.fs.ufs import build_ufs_directory_block, read_ufs_path_bytes
+from host_tools.fs.ufs import build_ufs_directory_block, format_ufs_filesystem, make_ufs_directory, create_ufs_file, read_ufs_path_bytes
 from host_tools.fs.common import UFS_FS_BSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_MAGIC, UFS_SB_OFFSET
 from host_tools.fs.ufs import UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NINDIR_OFFSET
 from host_tools.fs.ufs_fuse import UFSOperations, UFSVolume, make_test_context
 from host_tools.fs.ufs_lowlevel import detect_ufs as detect_ufs_lowlevel, read_ufs_file as read_ufs_file_lowlevel, read_ufs_inode as read_ufs_inode_lowlevel, ufs_inode_offset as ufs_inode_offset_lowlevel
 from test_ufs_namespace import build_test_filesystem
+from tasks.make_image import _build_hdboot_partition_bootstrap
 
 
 class DiskLayoutTests(unittest.TestCase):
+    def test_active_partition_chainloader_mbr_relocates_before_loading_bootstrap(self) -> None:
+        self.assertLessEqual(len(ACTIVE_PARTITION_CHAINLOADER_MBR), 446)
+        self.assertIn(bytes.fromhex('89e6bf0006b90002fcf3a4ea1d060000'), ACTIVE_PARTITION_CHAINLOADER_MBR)
+        self.assertIn(bytes.fromhex('ea007c0000'), ACTIVE_PARTITION_CHAINLOADER_MBR)
+
+    def test_hdboot_partition_bootstrap_requires_signature_at_sector_end(self) -> None:
+        elf_header_size = 52
+        program_header_size = 32
+        segment_offset = 0x100
+        segment_size = 768
+
+        payload = bytearray(segment_offset + segment_size)
+        payload[0:4] = b'\x7fELF'
+        payload[4] = 1
+        payload[5] = 1
+        payload[28:32] = elf_header_size.to_bytes(4, 'little')
+        payload[42:44] = program_header_size.to_bytes(2, 'little')
+        payload[44:46] = (1).to_bytes(2, 'little')
+
+        program_header_offset = elf_header_size
+        payload[program_header_offset:program_header_offset + 4] = (1).to_bytes(4, 'little')
+        payload[program_header_offset + 4:program_header_offset + 8] = segment_offset.to_bytes(4, 'little')
+        payload[program_header_offset + 12:program_header_offset + 16] = (0).to_bytes(4, 'little')
+        payload[program_header_offset + 16:program_header_offset + 20] = segment_size.to_bytes(4, 'little')
+
+        segment = bytearray(segment_size)
+        segment[510:512] = b'\x55\xaa'
+        payload[segment_offset:segment_offset + segment_size] = segment
+
+        fake_path = Path('/tmp/hdboot-test')
+        with patch.object(Path, 'read_bytes', return_value=bytes(payload)):
+            flattened = _build_hdboot_partition_bootstrap(fake_path)
+
+        self.assertEqual(flattened[510:512], b'\x55\xaa')
+        self.assertEqual(flattened[506:508], b'\x00\x00')
+
     def test_parse_alt_info_and_remap_guest_sector(self) -> None:
         raw = bytearray()
         raw.extend(ALT_SANITY.to_bytes(4, 'little'))
@@ -257,6 +295,20 @@ class DiskLayoutTests(unittest.TestCase):
                     volume.close()
 
         trio.run(scenario)
+
+    def test_format_ufs_filesystem_builds_mutable_slice(self) -> None:
+        slice_image = bytearray(16 * 1024 * 1024)
+
+        filesystem = format_ufs_filesystem(slice_image)
+        make_ufs_directory(slice_image, filesystem, '/etc')
+        create_ufs_file(slice_image, filesystem, '/etc/motd', b'svr4\n')
+
+        detected = detect_ufs_lowlevel(bytes(slice_image))
+
+        self.assertEqual(len(detected), 1)
+        self.assertEqual(detected[0].super_offset, UFS_SB_OFFSET)
+        self.assertEqual(detected[0].start_offset, 0)
+        self.assertEqual(read_ufs_path_bytes(bytes(slice_image), filesystem, '/etc/motd')[2], b'svr4\n')
 
     def test_bfs_volume_uses_absolute_slice_offset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

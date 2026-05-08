@@ -3,7 +3,32 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from time import time
 
-from .common import BFS_DIRENT_SIZE, BFS_LDIR_SIZE, BFS_MAGIC, BFS_ROOT_INODE, BFS_SUPER_SIZE, FilesystemCandidate, SECTOR_SIZE, i32, u16, u32
+from .common import (
+    BFS_DIRENT_EBLOCK_OFFSET,
+    BFS_DIRENT_EOFFSET_OFFSET,
+    BFS_DIRENT_INO_OFFSET,
+    BFS_DIRENT_SBLOCK_OFFSET,
+    BFS_DIRENT_SIZE,
+    BFS_DIRENT_VATTR_OFFSET,
+    BFS_LDIR_SIZE,
+    BFS_MAGIC,
+    BFS_ROOT_INODE,
+    BFS_SUPER_SIZE,
+    BFS_VATTR_ATIME_OFFSET,
+    BFS_VATTR_CTIME_OFFSET,
+    BFS_VATTR_GID_OFFSET,
+    BFS_VATTR_MODE_OFFSET,
+    BFS_VATTR_MTIME_OFFSET,
+    BFS_VATTR_NLINK_OFFSET,
+    BFS_VATTR_SIZE,
+    BFS_VATTR_TYPE_OFFSET,
+    BFS_VATTR_UID_OFFSET,
+    FilesystemCandidate,
+    SECTOR_SIZE,
+    i32,
+    u16,
+    u32,
+)
 
 
 BFS_VREG = 1
@@ -38,14 +63,14 @@ class BfsFileEntry:
 
 def read_bfs_vattr(raw: ImageBuffer, offset: int = 16) -> dict[str, int]:
     return {
-        'file_type': u32(raw, offset),
-        'mode': u16(raw, offset + 4),
-        'uid': u16(raw, offset + 6),
-        'gid': u16(raw, offset + 8),
-        'nlink': u16(raw, offset + 10),
-        'atime': i32(raw, offset + 12),
-        'mtime': i32(raw, offset + 16),
-        'ctime': i32(raw, offset + 20),
+        'file_type': u32(raw, offset + BFS_VATTR_TYPE_OFFSET),
+        'mode': u32(raw, offset + BFS_VATTR_MODE_OFFSET),
+        'uid': u32(raw, offset + BFS_VATTR_UID_OFFSET),
+        'gid': u32(raw, offset + BFS_VATTR_GID_OFFSET),
+        'nlink': u32(raw, offset + BFS_VATTR_NLINK_OFFSET),
+        'atime': i32(raw, offset + BFS_VATTR_ATIME_OFFSET),
+        'mtime': i32(raw, offset + BFS_VATTR_MTIME_OFFSET),
+        'ctime': i32(raw, offset + BFS_VATTR_CTIME_OFFSET),
     }
 
 
@@ -83,8 +108,13 @@ def read_bfs_dirent(image: ImageBuffer, fs_start: int, inode_number: int) -> dic
     if inode_offset < fs_start or inode_offset + BFS_DIRENT_SIZE > len(image):
         return None
     raw = image[inode_offset:inode_offset + BFS_DIRENT_SIZE]
-    inode = {'d_ino': u16(raw, 0), 'd_sblock': u32(raw, 4), 'd_eblock': u32(raw, 8), 'd_eoffset': u32(raw, 12)}
-    inode.update(read_bfs_vattr(raw))
+    inode = {
+        'd_ino': u16(raw, BFS_DIRENT_INO_OFFSET),
+        'd_sblock': u32(raw, BFS_DIRENT_SBLOCK_OFFSET),
+        'd_eblock': u32(raw, BFS_DIRENT_EBLOCK_OFFSET),
+        'd_eoffset': u32(raw, BFS_DIRENT_EOFFSET_OFFSET),
+    }
+    inode.update(read_bfs_vattr(raw, BFS_DIRENT_VATTR_OFFSET))
     return inode
 
 
@@ -218,10 +248,10 @@ def scan_bfs_dirents(image: ImageBuffer, filesystem: FilesystemCandidate) -> lis
             BfsDirentRecord(
                 inode_number=inode_number,
                 inode_offset=inode_offset,
-                d_ino=u16(raw, 0),
-                d_sblock=u32(raw, 4),
-                d_eblock=u32(raw, 8),
-                d_eoffset=u32(raw, 12),
+                d_ino=u16(raw, BFS_DIRENT_INO_OFFSET),
+                d_sblock=u32(raw, BFS_DIRENT_SBLOCK_OFFSET),
+                d_eblock=u32(raw, BFS_DIRENT_EBLOCK_OFFSET),
+                d_eoffset=u32(raw, BFS_DIRENT_EOFFSET_OFFSET),
             )
         )
     return records
@@ -254,26 +284,26 @@ def valid_bfs_file_records(image: ImageBuffer, filesystem: FilesystemCandidate) 
 
 def write_bfs_inode(image: bytearray, filesystem: FilesystemCandidate, inode_number: int, inode: dict[str, int]) -> None:
     inode_offset = bfs_inode_offset(filesystem, inode_number)
-    image[inode_offset:inode_offset + 2] = int(inode['d_ino']).to_bytes(2, 'little', signed=False)
-    image[inode_offset + 4:inode_offset + 8] = int(inode['d_sblock']).to_bytes(4, 'little', signed=False)
-    image[inode_offset + 8:inode_offset + 12] = int(inode['d_eblock']).to_bytes(4, 'little', signed=False)
-    image[inode_offset + 12:inode_offset + 16] = int(inode['d_eoffset']).to_bytes(4, 'little', signed=False)
+    image[inode_offset + BFS_DIRENT_INO_OFFSET:inode_offset + BFS_DIRENT_INO_OFFSET + 2] = int(inode['d_ino']).to_bytes(2, 'little', signed=False)
+    image[inode_offset + BFS_DIRENT_SBLOCK_OFFSET:inode_offset + BFS_DIRENT_SBLOCK_OFFSET + 4] = int(inode['d_sblock']).to_bytes(4, 'little', signed=False)
+    image[inode_offset + BFS_DIRENT_EBLOCK_OFFSET:inode_offset + BFS_DIRENT_EBLOCK_OFFSET + 4] = int(inode['d_eblock']).to_bytes(4, 'little', signed=False)
+    image[inode_offset + BFS_DIRENT_EOFFSET_OFFSET:inode_offset + BFS_DIRENT_EOFFSET_OFFSET + 4] = int(inode['d_eoffset']).to_bytes(4, 'little', signed=False)
     if 'file_type' in inode:
-        image[inode_offset + 16:inode_offset + 20] = int(inode['file_type']).to_bytes(4, 'little', signed=False)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_TYPE_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_TYPE_OFFSET + 4] = int(inode['file_type']).to_bytes(4, 'little', signed=False)
     if 'mode' in inode:
-        image[inode_offset + 20:inode_offset + 22] = int(inode['mode']).to_bytes(2, 'little', signed=False)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_MODE_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_MODE_OFFSET + 4] = int(inode['mode']).to_bytes(4, 'little', signed=False)
     if 'uid' in inode:
-        image[inode_offset + 22:inode_offset + 24] = int(inode['uid']).to_bytes(2, 'little', signed=False)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_UID_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_UID_OFFSET + 4] = int(inode['uid']).to_bytes(4, 'little', signed=False)
     if 'gid' in inode:
-        image[inode_offset + 24:inode_offset + 26] = int(inode['gid']).to_bytes(2, 'little', signed=False)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_GID_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_GID_OFFSET + 4] = int(inode['gid']).to_bytes(4, 'little', signed=False)
     if 'nlink' in inode:
-        image[inode_offset + 26:inode_offset + 28] = int(inode['nlink']).to_bytes(2, 'little', signed=False)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_NLINK_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_NLINK_OFFSET + 4] = int(inode['nlink']).to_bytes(4, 'little', signed=False)
     if 'atime' in inode:
-        image[inode_offset + 28:inode_offset + 32] = int(inode['atime']).to_bytes(4, 'little', signed=True)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_ATIME_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_ATIME_OFFSET + 4] = int(inode['atime']).to_bytes(4, 'little', signed=True)
     if 'mtime' in inode:
-        image[inode_offset + 32:inode_offset + 36] = int(inode['mtime']).to_bytes(4, 'little', signed=True)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_MTIME_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_MTIME_OFFSET + 4] = int(inode['mtime']).to_bytes(4, 'little', signed=True)
     if 'ctime' in inode:
-        image[inode_offset + 36:inode_offset + 40] = int(inode['ctime']).to_bytes(4, 'little', signed=True)
+        image[inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_CTIME_OFFSET:inode_offset + BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_CTIME_OFFSET + 4] = int(inode['ctime']).to_bytes(4, 'little', signed=True)
 
 
 def build_bfs_vattr(
@@ -288,15 +318,15 @@ def build_bfs_vattr(
     mtime: int | None = None,
     ctime: int | None = None,
 ) -> bytes:
-    raw = bytearray(40)
-    raw[0:4] = int(file_type).to_bytes(4, 'little', signed=False)
-    raw[4:6] = int(mode).to_bytes(2, 'little', signed=False)
-    raw[6:8] = int(uid).to_bytes(2, 'little', signed=False)
-    raw[8:10] = int(gid).to_bytes(2, 'little', signed=False)
-    raw[10:12] = int(nlink).to_bytes(2, 'little', signed=False)
-    raw[12:16] = int(timestamp if atime is None else atime).to_bytes(4, 'little', signed=True)
-    raw[16:20] = int(timestamp if mtime is None else mtime).to_bytes(4, 'little', signed=True)
-    raw[20:24] = int(timestamp if ctime is None else ctime).to_bytes(4, 'little', signed=True)
+    raw = bytearray(BFS_VATTR_SIZE)
+    raw[BFS_VATTR_TYPE_OFFSET:BFS_VATTR_TYPE_OFFSET + 4] = int(file_type).to_bytes(4, 'little', signed=False)
+    raw[BFS_VATTR_MODE_OFFSET:BFS_VATTR_MODE_OFFSET + 4] = int(mode).to_bytes(4, 'little', signed=False)
+    raw[BFS_VATTR_UID_OFFSET:BFS_VATTR_UID_OFFSET + 4] = int(uid).to_bytes(4, 'little', signed=False)
+    raw[BFS_VATTR_GID_OFFSET:BFS_VATTR_GID_OFFSET + 4] = int(gid).to_bytes(4, 'little', signed=False)
+    raw[BFS_VATTR_NLINK_OFFSET:BFS_VATTR_NLINK_OFFSET + 4] = int(nlink).to_bytes(4, 'little', signed=False)
+    raw[BFS_VATTR_ATIME_OFFSET:BFS_VATTR_ATIME_OFFSET + 4] = int(timestamp if atime is None else atime).to_bytes(4, 'little', signed=True)
+    raw[BFS_VATTR_MTIME_OFFSET:BFS_VATTR_MTIME_OFFSET + 4] = int(timestamp if mtime is None else mtime).to_bytes(4, 'little', signed=True)
+    raw[BFS_VATTR_CTIME_OFFSET:BFS_VATTR_CTIME_OFFSET + 4] = int(timestamp if ctime is None else ctime).to_bytes(4, 'little', signed=True)
     return bytes(raw)
 
 
@@ -317,11 +347,11 @@ def build_bfs_dirent_bytes(
     ctime: int | None = None,
 ) -> bytes:
     raw = bytearray(BFS_DIRENT_SIZE)
-    raw[0:2] = int(inode_number).to_bytes(2, 'little', signed=False)
-    raw[4:8] = int(start_block).to_bytes(4, 'little', signed=False)
-    raw[8:12] = int(end_block).to_bytes(4, 'little', signed=False)
-    raw[12:16] = int(end_offset).to_bytes(4, 'little', signed=False)
-    raw[16:56] = build_bfs_vattr(
+    raw[BFS_DIRENT_INO_OFFSET:BFS_DIRENT_INO_OFFSET + 2] = int(inode_number).to_bytes(2, 'little', signed=False)
+    raw[BFS_DIRENT_SBLOCK_OFFSET:BFS_DIRENT_SBLOCK_OFFSET + 4] = int(start_block).to_bytes(4, 'little', signed=False)
+    raw[BFS_DIRENT_EBLOCK_OFFSET:BFS_DIRENT_EBLOCK_OFFSET + 4] = int(end_block).to_bytes(4, 'little', signed=False)
+    raw[BFS_DIRENT_EOFFSET_OFFSET:BFS_DIRENT_EOFFSET_OFFSET + 4] = int(end_offset).to_bytes(4, 'little', signed=False)
+    raw[BFS_DIRENT_VATTR_OFFSET:BFS_DIRENT_VATTR_OFFSET + BFS_VATTR_SIZE] = build_bfs_vattr(
         file_type,
         mode,
         uid=uid,
