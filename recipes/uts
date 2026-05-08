@@ -1,0 +1,43 @@
+#!/bin/bash
+
+name=uts
+from_source=uts
+revision=1
+imagedeps="build-essential python3 python3-venv"
+hostdeps="gcc"
+allow_network=yes
+deps="base-files"
+
+configure() {
+    python3 -m venv build_venv
+    ./build_venv/bin/pip install -r ${base_dir}/requirements.txt
+}
+
+build() {
+    ./build_venv/bin/python ${source_dir}/build.py \
+        -t kernel-system-at386
+}
+
+package() {
+    mkdir -pv "${dest_dir}/stand"
+    mkdir -pv "${dest_dir}/etc/initprog"
+    # TODO: determine if and where we want to copy these
+    mkdir -pv "${dest_dir}/etc/unix_conf"
+
+    cp -pv build/uts/i386/conf/cf.d/unix \
+        build/uts/i386/boot/build/hdboot \
+        build/uts/i386/boot/at386/initprog/at386 \
+        build/uts/i386/boot/at386/initprog/att \
+        build/uts/i386/boot/at386/initprog/compaq \
+        "${dest_dir}/stand/"
+    cp -pv build/uts/i386/boot/at386/initprog/at386 \
+        build/uts/i386/boot/at386/initprog/att \
+        build/uts/i386/boot/at386/initprog/compaq \
+        "${dest_dir}/etc/initprog"
+    cp -pv build/uts/i386/conf/cf.d/kernmap \
+        build/uts/i386/conf/cf.d/mdevice \
+        build/uts/i386/conf/cf.d/mtune \
+        build/uts/i386/conf/cf.d/sassign \
+        build/uts/i386/conf/cf.d/stune \
+        "${dest_dir}/etc/unix_conf/"
+}

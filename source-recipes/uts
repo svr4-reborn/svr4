@@ -1,0 +1,6 @@
+#!/bin/bash
+
+name=uts
+version=0.1
+skip_pkg_check=yes
+source_dir="uts"

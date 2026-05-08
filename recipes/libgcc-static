@@ -1,0 +1,55 @@
+#! /bin/sh
+
+name=libgcc-static
+from_source=gcc
+revision=1
+hostdeps="gcc libtool pkg-config"
+imagedeps="build-essential"
+builddeps="mlibc-headers"
+repology_id=gcc
+
+build() {
+    cd "${build_dir}"/host-builds/gcc/build
+
+    make -j${parallelism} "MAKE=make SHLIB_LINK=" all-target-libgcc
+}
+
+package() {
+    cd "${build_dir}"/host-builds/gcc/build
+
+    rm -rf tmp_libgcc_dir
+    mkdir tmp_libgcc_dir
+
+    DESTDIR="$(realpath tmp_libgcc_dir)" make "MAKE=make SHLIB_LINK=" install-target-libgcc
+
+    find tmp_libgcc_dir/usr/local/lib -type f \
+        ! \( \
+            -name 'libgcc.a' -o \
+            -name 'libgcov.a' -o \
+            -name 'unwind.h' -o \
+            -name 'gcov.h' -o \
+            -name 'crtbegin.o' -o \
+            -name 'crtbeginS.o' -o \
+            -name 'crtbeginT.o' -o \
+            -name 'crtend.o' -o \
+            -name 'crtendS.o' -o \
+            -name 'crtfastmath.o' -o \
+            -name 'crtprec32.o' -o \
+            -name 'crtprec64.o' -o \
+            -name 'crtprec80.o' \
+        \) \
+        -delete
+    find tmp_libgcc_dir/usr/local/lib -type l -delete
+    find tmp_libgcc_dir/usr/local/lib -type d -empty -delete
+    if [ -d "tmp_libgcc_dir/usr/local/${OS_TRIPLET}" ]; then
+        rm -rf "tmp_libgcc_dir/usr/local/${OS_TRIPLET}"
+    fi
+
+    mkdir -p "${dest_dir}${prefix}"
+
+    cp -r tmp_libgcc_dir/usr/local/lib "${dest_dir}${prefix}"/
+
+    # Copy libgcc into GCC's tree else it will complain.
+    mkdir -p "${build_dir}"/host-pkgs/gcc/usr/local/lib
+    cp -r tmp_libgcc_dir/usr/local/lib/* "${build_dir}"/host-pkgs/gcc/usr/local/lib/
+}

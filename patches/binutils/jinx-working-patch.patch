@@ -1,0 +1,53 @@
+diff --git binutils-clean/bfd/config.bfd binutils-workdir/bfd/config.bfd
+index 0d79011..ff4b5de 100644
+--- binutils-clean/bfd/config.bfd
++++ binutils-workdir/bfd/config.bfd
+@@ -665,6 +665,10 @@ case "${targ}" in
+     targ_selvecs=
+     targ64_selvecs=x86_64_elf64_vec
+     ;;
++  i[3-7]86-*-svr4*)
++    targ_defvec=i386_elf32_vec
++    targ_selvecs=
++    ;;
+ #ifdef BFD64
+   x86_64-*-cloudabi*)
+     targ_defvec=x86_64_elf64_cloudabi_vec
+diff --git binutils-clean/configure binutils-workdir/configure
+index bbfb597..6e58318 100755
+--- binutils-clean/configure
++++ binutils-workdir/configure
+@@ -3083,7 +3083,7 @@ case "${ENABLE_GOLD}" in
+       *-*-elf* | *-*-sysv4* | *-*-unixware* | *-*-eabi* | hppa*64*-*-hpux* \
+       | *-*-linux* | *-*-gnu* | frv-*-uclinux* | *-*-irix5* | *-*-irix6* \
+       | *-*-netbsd* | *-*-openbsd* | *-*-freebsd* | *-*-dragonfly* \
+-      | *-*-solaris2* | *-*-nto* | *-*-nacl* | *-*-haiku*)
++      | *-*-solaris2* | *-*-nto* | *-*-nacl* | *-*-haiku* | *-*-mlibc* )
+         case "${target}" in
+           *-*-linux*aout* | *-*-linux*oldld*)
+             ;;
+diff --git binutils-clean/gas/configure.tgt binutils-workdir/gas/configure.tgt
+index 7c81bff..8fe72c3 100644
+--- binutils-clean/gas/configure.tgt
++++ binutils-workdir/gas/configure.tgt
+@@ -243,6 +243,7 @@ case ${generic_target} in
+     esac ;;
+   i386-*-lynxos*)			fmt=elf em=lynx ;;
+   i386-*-redox*)			fmt=elf ;;
++  i386-*-svr4*)       fmt=elf ;;
+   i386-*-solaris*)			fmt=elf em=solaris ;;
+   i386-*-freebsd* \
+   | i386-*-kfreebsd*-gnu)		fmt=elf em=freebsd ;;
+diff --git binutils-clean/ld/configure.tgt binutils-workdir/ld/configure.tgt
+index ea01ccf..9cf77d9 100644
+--- binutils-clean/ld/configure.tgt
++++ binutils-workdir/ld/configure.tgt
+@@ -381,6 +381,8 @@ i[3-7]86-*-linux-*)	targ_emul=elf_i386
+ 			targ64_extra_emuls="elf_x86_64 elf32_x86_64"
+ 			targ64_extra_libpath="elf_x86_64 elf32_x86_64"
+ 			;;
++i[3-7]86-*-svr4*)	targ_emul=elf_i386
++			;;
+ i[3-7]86-*-redox*)	targ_emul=elf_i386
+ 			targ_extra_emuls=elf_x86_64
+ 			;;

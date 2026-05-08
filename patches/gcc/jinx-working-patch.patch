@@ -1,0 +1,201 @@
+diff --git gcc-clean/fixincludes/mkfixinc.sh gcc-workdir/fixincludes/mkfixinc.sh
+index 7112f4d..6329678 100755
+--- gcc-clean/fixincludes/mkfixinc.sh
++++ gcc-workdir/fixincludes/mkfixinc.sh
+@@ -11,6 +11,7 @@ target=fixinc.sh
+ 
+ # Check for special fix rules for particular targets
+ case $machine in
++    *-mlibc* | \
+     i?86-*-cygwin* | \
+     *-mingw32* | \
+     powerpc-*-eabisim* | \
+diff --git gcc-workdir/gcc/config/i386/svr4_reborn.h gcc-workdir/gcc/config/i386/svr4_reborn.h
+new file mode 100644
+index 0000000..e5fcc99
+--- /dev/null
++++ gcc-workdir/gcc/config/i386/svr4_reborn.h
+@@ -0,0 +1,8 @@
++#undef GCC_I386_SVR4
++#define GCC_I386_SVR4 1
++
++#define GNU_USER_LINK_EMULATION "elf_i386"
++#define GNU_USER_DYNAMIC_LINKER "/lib/ld.so"
++
++#define GNU_USER_LINK_EMULATION32 GNU_USER_LINK_EMULATOR
++#define GNU_USER_DYNAMIC_LINKER32 GNU_USER_DYNAMIC_LINKER
+diff --git gcc-workdir/gcc/config/svr4_reborn.h gcc-workdir/gcc/config/svr4_reborn.h
+new file mode 100644
+index 0000000..269f711
+--- /dev/null
++++ gcc-workdir/gcc/config/svr4_reborn.h
+@@ -0,0 +1,15 @@
++#undef TARGET_SVR4
++#define TARGET_SVR4 1
++
++#undef GNU_USER_TARGET_OS_CPP_BUILTINS
++#define GNU_USER_TARGET_OS_CPP_BUILTINS() \
++  do { \
++    builtin_define ("__svr4_reborn__"); \
++    builtin_define ("__svr4__"); \
++    builtin_define ("__SVR4"); \
++    builtin_define ("__mlibc__"); \
++    builtin_define ("__unix__"); \
++    builtin_assert ("system=svr4"); \
++    builtin_assert ("system=unix"); \
++    builtin_assert ("system=posix"); \
++  } while (0);
+diff --git gcc-clean/gcc/config.build gcc-workdir/gcc/config.build
+index 7c80a0b..8fac7e4 100644
+--- gcc-clean/gcc/config.build
++++ gcc-workdir/gcc/config.build
+@@ -45,7 +45,7 @@
+ build_xm_file=
+ build_xm_defines=
+ build_exeext=
+-build_install_headers_dir=install-headers-tar
++build_install_headers_dir=install-headers-cp
+ build_file_translate=
+ 
+ # System-specific settings.
+diff --git gcc-clean/gcc/config.gcc gcc-workdir/gcc/config.gcc
+index 40b50dc..74bc0fd 100644
+--- gcc-clean/gcc/config.gcc
++++ gcc-workdir/gcc/config.gcc
+@@ -885,6 +885,15 @@ case ${target} in
+   rust_target_objs="${rust_target_objs} fuchsia-rust.o"
+   target_has_targetrustm=yes
+   ;;
++*-*-*-mlibc)
++  extra_options="$extra_options gnu-user.opt"
++  gas=yes
++  gnu_ld=yes
++  default_use_cxa_atexit=yes
++  use_gcc_stdint=wrap
++  tmake_file="${tmake_file} t-slibgcc"
++  thread_file='posix'
++  ;;
+ *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu | *-*-uclinuxfdpiceabi)
+   extra_options="$extra_options gnu-user.opt"
+   gas=yes
+@@ -2160,6 +2169,12 @@ i[34567]86-*-solaris2* | x86_64-*-solaris2*)
+ 		esac
+ 	fi
+ 	;;
++i[34567]86-*-svr4*)
++	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h gnu-user.h svr4_reborn.h glibc-stdint.h i386/gnu-user-common.h i386/gnu-user.h i386/svr4_reborn.h"
++	gnu_ld=yes
++  tmake_file="$tmake_file t-softfp-sfdftf i386/32/t-softfp i386/t-softfp t-softfp"
++	gas=yes
++	;;
+ i[4567]86-wrs-vxworks*|x86_64-wrs-vxworks7*)
+ 	tm_file="${tm_file} i386/unix.h i386/att.h elfos.h"
+ 	case ${target} in
+diff --git gcc-clean/gcc/cp/module.cc gcc-workdir/gcc/cp/module.cc
+index 5ff5c46..0dfa6db 100644
+--- gcc-clean/gcc/cp/module.cc
++++ gcc-workdir/gcc/cp/module.cc
+@@ -1697,9 +1697,10 @@ elf_in::defrost (const char *name)
+ 	      set_error (errno);
+ 	  else
+ 	    {
+-	      if (madvise (mapping, hdr.pos, MADV_RANDOM))
++#ifndef __svr4_reborn__
++        if (madvise (mapping, hdr.pos, MADV_RANDOM))
+ 		goto fail;
+-
++#endif
+ 	      /* These buffers are never NULL in this case.  */
+ 	      strtab.buffer = mapping + strtab.pos;
+ 	      sectab.buffer = mapping + sectab.pos;
+@@ -1808,8 +1809,10 @@ elf_in::begin (location_t loc)
+     }
+   /* We'll be hopping over this randomly.  Some systems declare the
+      first parm as char *, and other declare it as void *.  */
++#ifndef __svr4_reborn__
+   if (madvise (reinterpret_cast <char *> (mapping), size, MADV_RANDOM))
+     goto fail;
++#endif
+ 
+   hdr.buffer = (char *)mapping;
+ #else
+diff --git gcc-clean/libatomic/configure.tgt gcc-workdir/libatomic/configure.tgt
+index 6db039d..e4fc391 100644
+--- gcc-clean/libatomic/configure.tgt
++++ gcc-workdir/libatomic/configure.tgt
+@@ -151,7 +151,7 @@ case "${target}" in
+   *-*-linux* | *-*-gnu* | *-*-k*bsd*-gnu \
+   | *-*-netbsd* | *-*-freebsd* | *-*-openbsd* | *-*-dragonfly* \
+   | *-*-solaris2* | *-*-sysv4* | *-*-irix6* | *-*-osf* | *-*-hpux11* \
+-  | *-*-darwin* | *-*-aix* | *-*-cygwin*)
++  | *-*-darwin* | *-*-aix* | *-*-cygwin* | *-*-mlibc*)
+ 	# POSIX system.  The OS is supported.
+ 	config_path="${config_path} posix"
+ 	;;
+diff --git gcc-clean/libcpp/Makefile.in gcc-workdir/libcpp/Makefile.in
+index bb07e46..7b9acda 100644
+--- gcc-clean/libcpp/Makefile.in
++++ gcc-workdir/libcpp/Makefile.in
+@@ -32,10 +32,10 @@ AUTOCONF = @AUTOCONF@
+ AUTOHEADER = @AUTOHEADER@
+ CATALOGS = $(patsubst %,po/%,@CATALOGS@)
+ CC = @CC@
+-CFLAGS = @CFLAGS@
++override CFLAGS = @CFLAGS@
+ WARN_CFLAGS = @warn@ @c_warn@ @WARN_PEDANTIC@ @WERROR@
+ CXX = @CXX@
+-CXXFLAGS = @CXXFLAGS@
++override CXXFLAGS = @CXXFLAGS@
+ WARN_CXXFLAGS = @warn@ @WARN_PEDANTIC@ @WERROR@
+ CPP = @CPP@
+ CPPFLAGS = @CPPFLAGS@
+@@ -45,7 +45,7 @@ INCINTL = @INCINTL@
+ INSTALL_DATA = @INSTALL_DATA@
+ INSTALL_PROGRAM = @INSTALL_PROGRAM@
+ INSTALL_SCRIPT = @INSTALL_SCRIPT@
+-LDFLAGS = @LDFLAGS@
++override LDFLAGS = @LDFLAGS@
+ LIBICONV = @LIBICONV@
+ LIBINTL = @LIBINTL@
+ PACKAGE = @PACKAGE@
+diff --git gcc-clean/libgcc/config.host gcc-workdir/libgcc/config.host
+index 6a88ee5..6568681 100644
+--- gcc-clean/libgcc/config.host
++++ gcc-workdir/libgcc/config.host
+@@ -310,6 +310,11 @@ case ${host} in
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-fuchsia"
+   extra_parts="crtbegin.o crtend.o"
+   ;;
++*-*-*-mlibc)
++  extra_parts="$extra_parts crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
++  tmake_file="$tmake_file t-crtstuff-pic"
++  tmake_file="$tmake_file t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-libgcc-pic"
++  ;;
+ *-*-linux* | frv-*-*linux* | *-*-kfreebsd*-gnu | *-*-gnu* | *-*-kopensolaris*-gnu | *-*-uclinuxfdpiceabi)
+   tmake_file="$tmake_file t-crtstuff-pic t-libgcc-pic t-eh-dw2-dip t-slibgcc t-slibgcc-gld t-slibgcc-elf-ver t-linux"
+   extra_parts="crtbegin.o crtbeginS.o crtbeginT.o crtend.o crtendS.o"
+@@ -847,6 +852,11 @@ i[34567]86-*-solaris2* | x86_64-*-solaris2*)
+ 	tm_file="${tm_file} i386/elf-lib.h"
+ 	md_unwind_header=i386/sol2-unwind.h
+ 	;;
++i[34567]86-*-svr4*)
++	extra_parts="$extra_parts crtprec32.o crtprec64.o crtprec80.o crtfastmath.o"
++	tmake_file="$tmake_file i386/t-crtpc t-crtfm i386/t-crtstuff t-dfprules"
++	tmake_file="$tmake_file i386/t-linux"
++	;;
+ i[4567]86-wrs-vxworks*|x86_64-wrs-vxworks*)
+ 	;;
+ i[34567]86-*-cygwin*)
+diff --git gcc-clean/libstdc++-v3/configure gcc-workdir/libstdc++-v3/configure
+index 819a1d8..52df448 100755
+--- gcc-clean/libstdc++-v3/configure
++++ gcc-workdir/libstdc++-v3/configure
+@@ -38856,7 +38856,7 @@ $as_echo "#define HAVE_TLS 1" >>confdefs.h
+ 
+   fi
+     ;;
+-  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris*)
++  *-linux* | *-uclinux* | *-gnu* | *-kfreebsd*-gnu | *-cygwin* | *-solaris* | *-mlibc*)
+ 
+   # All these tests are for C++; save the language and the compiler flags.
+   # The CXXFLAGS thing is suspicious, but based on similar bits previously

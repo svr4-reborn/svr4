@@ -1,0 +1,39 @@
+diff --git autoconf-clean/build-aux/config.guess autoconf-workdir/build-aux/config.guess
+index cdfc439..cfa71e3 100755
+--- autoconf-clean/build-aux/config.guess
++++ autoconf-workdir/build-aux/config.guess
+@@ -1229,6 +1229,12 @@ EOF
+ 	# Use sysv4.2uw... so that sysv4* matches it.
+ 	GUESS=$UNAME_MACHINE-pc-sysv4.2uw$UNAME_VERSION
+ 	;;
++	i*86:[Ss][Vv][Rr]4:*:*)
++	# TODO: check if we (SVr4 remastered) match any other rules here already that are suitable.
++	# We aim to be detected as a SVr4 system, but given our very old kernel, we don't want to be detected as a modern SVr4 system.
++	# (hence our deviation from the normal UNIX_SV kernel name, in the hopes that modern tooling picks us up differently)
++	GUESS=$UNAME_MACHINE-pc-svr4$UNAME_RELEASE
++	;;
+     i*86:OS/2:*:*)
+ 	# If we were able to find 'uname', then EMX Unix compatibility
+ 	# is probably installed.
+diff --git autoconf-clean/build-aux/config.sub autoconf-workdir/build-aux/config.sub
+index defe52c..46a17b2 100755
+--- autoconf-clean/build-aux/config.sub
++++ autoconf-workdir/build-aux/config.sub
+@@ -145,7 +145,7 @@ case $1 in
+ 			nto-qnx* | linux-* | uclinux-uclibc* \
+ 			| uclinux-gnu* | kfreebsd*-gnu* | knetbsd*-gnu* | netbsd*-gnu* \
+ 			| netbsd*-eabi* | kopensolaris*-gnu* | cloudabi*-eabi* \
+-			| storm-chaos* | os2-emx* | rtmk-nova* | managarm-* \
++			| storm-chaos* | os2-emx* | rtmk-nova* | managarm-* | svr4-* \
+ 			| windows-* )
+ 				basic_machine=$field1
+ 				basic_os=$maybe_os
+@@ -1827,6 +1827,8 @@ case $kernel-$os-$obj in
+ 		;;
+ 	windows*-msvc*-)
+ 		;;
++	svr4-mlibc*-)
++		;;
+ 	-dietlibc*- | -newlib*- | -musl*- | -relibc*- | -uclibc*- | -mlibc*- )
+ 		# These are just libc implementations, not actual OSes, and thus
+ 		# require a kernel.

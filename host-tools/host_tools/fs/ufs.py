@@ -1003,6 +1003,16 @@ def recompute_ufs_summary_counts(image: bytearray, filesystem: FilesystemCandida
     image[super_offset + UFS_FS_CSTOTAL_NFFREE_OFFSET:super_offset + UFS_FS_CSTOTAL_NFFREE_OFFSET + 4] = total_nffree.to_bytes(4, 'little', signed=False)
 
 
+def maybe_recompute_ufs_summary_counts(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    *,
+    recompute_summary: bool,
+) -> None:
+    if recompute_summary:
+        recompute_ufs_summary_counts(image, filesystem)
+
+
 def ensure_ufs_metadata_normalized(image: bytearray, filesystem: FilesystemCandidate) -> None:
     key = _ufs_metadata_normalization_key(image, filesystem)
     if key in _UFS_METADATA_NORMALIZATION_STATE:
@@ -2015,6 +2025,8 @@ def create_ufs_file(
     uid: int = 0,
     gid: int = 0,
     timestamp: int = 0,
+    *,
+    recompute_summary: bool = True,
 ) -> dict[str, int | str]:
     if resolve_ufs_path(image, filesystem, target_path) is not None:
         raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
@@ -2036,7 +2048,7 @@ def create_ufs_file(
         clear_ufs_inode(image, filesystem, new_inode_number)
         free_ufs_inode(image, filesystem, new_inode_number)
         raise
-    recompute_ufs_summary_counts(image, filesystem)
+    maybe_recompute_ufs_summary_counts(image, filesystem, recompute_summary=recompute_summary)
     return {'operation': 'create', 'path': target_path, 'inode': new_inode_number, 'size': len(file_bytes)}
 
 
@@ -2052,6 +2064,7 @@ def create_ufs_special_file(
     uid: int = 0,
     gid: int = 0,
     timestamp: int = 0,
+    recompute_summary: bool = True,
 ) -> dict[str, int | str]:
     if file_type not in {UFS_IFBLK, UFS_IFCHR}:
         raise SystemExit(f'error: unsupported UFS special file type {file_type:o}')
@@ -2083,7 +2096,7 @@ def create_ufs_special_file(
         clear_ufs_inode(image, filesystem, new_inode_number)
         free_ufs_inode(image, filesystem, new_inode_number)
         raise
-    recompute_ufs_summary_counts(image, filesystem)
+    maybe_recompute_ufs_summary_counts(image, filesystem, recompute_summary=recompute_summary)
     return {'operation': 'mknod', 'path': target_path, 'inode': new_inode_number, 'major': major, 'minor': minor}
 
 
@@ -2095,6 +2108,8 @@ def make_ufs_directory(
     uid: int = 0,
     gid: int = 0,
     timestamp: int = 0,
+    *,
+    recompute_summary: bool = True,
 ) -> dict[str, int | str]:
     if resolve_ufs_path(image, filesystem, target_path) is not None:
         raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
@@ -2123,7 +2138,7 @@ def make_ufs_directory(
         clear_ufs_inode(image, filesystem, new_inode_number)
         free_ufs_inode(image, filesystem, new_inode_number, directory=True)
         raise
-    recompute_ufs_summary_counts(image, filesystem)
+    maybe_recompute_ufs_summary_counts(image, filesystem, recompute_summary=recompute_summary)
     return {'operation': 'mkdir', 'path': target_path, 'inode': new_inode_number}
 
 
@@ -2265,6 +2280,8 @@ def symlink_ufs_path(
     uid: int = 0,
     gid: int = 0,
     timestamp: int = 0,
+    *,
+    recompute_summary: bool = True,
 ) -> dict[str, int | str]:
     return create_ufs_file(
         image,
@@ -2275,6 +2292,7 @@ def symlink_ufs_path(
         uid=uid,
         gid=gid,
         timestamp=timestamp,
+        recompute_summary=recompute_summary,
     )
 
 

@@ -1,0 +1,4114 @@
+diff --git mlibc-clean/meson.build mlibc-workdir/meson.build
+index 662ba91..d4e6c8b 100644
+--- mlibc-clean/meson.build
++++ mlibc-workdir/meson.build
+@@ -15,10 +15,16 @@ endif
+ 
+ fs = import('fs')
+ 
++normalized_cpu_family = host_machine.cpu_family()
++# Match ix86
++if normalized_cpu_family.startswith('i') and normalized_cpu_family.endswith('86')
++	normalized_cpu_family = 'x86'
++endif
++
+ rtld_include_dirs = [
+ 	include_directories('options/internal/include'),
+-	include_directories('options/internal' / host_machine.cpu_family() + '-include'),
+-	include_directories('options/rtld' / host_machine.cpu_family()),
++	include_directories('options/internal' / normalized_cpu_family + '-include'),
++	include_directories('options/rtld' / normalized_cpu_family),
+ 	include_directories('options/rtld/include'),
+ ]
+ libc_include_dirs = [
+@@ -26,8 +32,8 @@ libc_include_dirs = [
+ 	include_directories('options/elf/include'),
+ 	include_directories('options/lsb/include'),
+ 	include_directories('options/rtld/include'),
+-	include_directories('options/rtld' / host_machine.cpu_family()),
+-	include_directories('options/internal' / host_machine.cpu_family() + '-include')
++	include_directories('options/rtld' / normalized_cpu_family),
++	include_directories('options/internal' / normalized_cpu_family + '-include')
+ ]
+ 
+ rtld_sources = [ ]
+@@ -47,7 +53,7 @@ build_tests_cross_libc = get_option('build_tests_cross_libc')
+ cross_libc_ld_prefix = get_option('cross_libc_ld_prefix')
+ 
+ # Disable cross-libc tests if no multilib is given, or build == host
+-if cross_libc_ld_prefix == '' or build_machine.cpu_family() == host_machine.cpu_family()
++if cross_libc_ld_prefix == '' or build_machine.cpu_family() == normalized_cpu_family
+ 	build_tests_cross_libc = false
+ endif
+ 
+@@ -70,6 +76,7 @@ if not headers_only
+ 			target_triple.to_lower().contains('mlibc'))
+ 
+ 	freestnd_c_hdrs_dep = dependency(
++		# Actually uses the correct suffix, not x86, for i686 and co
+ 		'freestnd-c-hdrs-' + host_machine.cpu_family(),
+ 		required: use_freestnd_hdrs,
+ 		fallback: ['freestnd-c-hdrs', 'freestnd_c_hdrs_dep'],
+@@ -78,6 +85,7 @@ if not headers_only
+ 	rtld_deps += freestnd_c_hdrs_dep
+ 
+ 	freestnd_cxx_hdrs_dep = dependency(
++		# Actually uses the correct suffix, not x86, for i686 and co
+ 		'freestnd-cxx-hdrs-' + host_machine.cpu_family(),
+ 		required: use_freestnd_hdrs,
+ 		fallback: ['freestnd-cxx-hdrs', 'freestnd_cxx_hdrs_dep'],
+@@ -204,7 +212,7 @@ if default_library_paths.length() == 0
+ 		'm68k': 32,
+ 		'loongarch64': 64,
+ 	}
+-	if target_word_size.get(target_machine.cpu_family()) == 64
++	if target_word_size.get(normalized_cpu_family) == 64
+ 		default_library_paths = ['/lib', '/lib64', '/usr/lib', '/usr/lib64']
+ 	else
+ 		default_library_paths = ['/lib', '/usr/lib']
+@@ -290,6 +298,14 @@ elif host_machine.system() == 'zinnia'
+ 	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
+ 	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
+ 	subdir('sysdeps/zinnia')
++elif host_machine.system() == 'svr4'
++	provides_bits_syscall_h = true
++	rtld_include_dirs += include_directories('sysdeps/svr4/include')
++	libc_include_dirs += include_directories('sysdeps/svr4/include')
++	internal_conf.set10('MLIBC_MAP_DSO_SEGMENTS', true)
++	internal_conf.set10('MLIBC_MMAP_ALLOCATE_DSO', true)
++	internal_conf.set10('MLIBC_MAP_FILE_WINDOWS', true)
++	subdir('sysdeps/svr4')
+ # ANCHOR: demo-sysdeps
+ elif host_machine.system() == 'demo'
+ 	subdir('sysdeps/demo')
+@@ -457,11 +473,11 @@ internal_sources = [
+ 	'options/internal/gcc/stack_protector.cpp',
+ 	'options/internal/gcc/guard-abi.cpp',
+ 	'options/internal/gcc-extra/cxxabi.cpp',
+-	'options/internal' / host_machine.cpu_family() / 'setjmp.S',
+-	'options/internal' / host_machine.cpu_family() / 'fenv.S',
++	'options/internal' / normalized_cpu_family / 'setjmp.S',
++	'options/internal' / normalized_cpu_family / 'fenv.S',
+ ]
+ 
+-if host_machine.cpu_family() == 'riscv64'
++if normalized_cpu_family == 'riscv64'
+ 	internal_sources += [
+ 		'options/internal/riscv64/hwprobe.cpp',
+ 	]
+@@ -472,7 +488,7 @@ if not no_headers
+ 		'options/internal/include/stdint.h'
+ 	)
+ 
+-	if host_machine.cpu_family() == 'riscv64'
++	if normalized_cpu_family == 'riscv64'
+ 		install_headers(
+ 			'options/internal/riscv64-include/sys/hwprobe.h',
+ 			subdir: 'sys'
+@@ -523,10 +539,10 @@ rtld_sources += [
+ 	'options/internal/generic/ubsan.cpp',
+ 	'options/rtld/generic/main.cpp',
+ 	'options/rtld/generic/linker.cpp',
+-	'options/rtld' / host_machine.cpu_family() / 'runtime.S'
++	'options/rtld' / normalized_cpu_family / 'runtime.S'
+ ]
+ 
+-rtld_dso_sources += ['options/rtld' / host_machine.cpu_family() / 'entry.S']
++rtld_dso_sources += ['options/rtld' / normalized_cpu_family / 'entry.S']
+ 
+ subdir('options/elf')
+ subdir('options/ansi')
+diff --git mlibc-workdir/sysdeps/svr4/README.md mlibc-workdir/sysdeps/svr4/README.md
+new file mode 100644
+index 0000000..ff71925
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/README.md
+@@ -0,0 +1,8 @@
++SVR4 sysdeps scaffold
++
++This tree is intentionally modeled after the Linux sysdeps layout, but only advertises the POSIX option set for now.
++
++Notes:
++- The i386 syscall ABI uses the SVR4 call gate (`lcall $0x7, $0`) rather than the Linux `int $0x80` ABI.
++- The `abi-bits` headers in this scaffold are seeded from an existing mlibc port so the tree has the expected public surface while the real SVR4 ABI gets audited.
++- Threading, cancellation, and signal return paths are placeholder scaffolding and still need a correctness pass against the kernel.
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/generic/entry.cpp mlibc-workdir/sysdeps/svr4/generic/entry.cpp
+new file mode 100644
+index 0000000..4e24153
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/generic/entry.cpp
+@@ -0,0 +1,16 @@
++#include <stdint.h>
++#include <stdlib.h>
++
++#include <mlibc/elf/startup.h>
++
++extern "C" void __dlapi_enter(uintptr_t *);
++
++extern char **environ;
++
++extern "C" void __mlibc_entry(uintptr_t *entry_stack,
++		int (*main_fn)(int argc, char *argv[], char *env[])) {
++	__dlapi_enter(entry_stack);
++
++	auto result = main_fn(mlibc::entry_stack.argc, mlibc::entry_stack.argv, environ);
++	exit(result);
++}
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/generic/sysdeps.cpp mlibc-workdir/sysdeps/svr4/generic/sysdeps.cpp
+new file mode 100644
+index 0000000..dbcd4ba
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/generic/sysdeps.cpp
+@@ -0,0 +1,135 @@
++#include <errno.h>
++#include <string.h>
++
++#include <abi-bits/errno.h>
++#include <abi-bits/fcntl.h>
++#include <abi-bits/vm-flags.h>
++#include <bits/syscall.h>
++#include <mlibc/all-sysdeps.hpp>
++#include <mlibc/debug.hpp>
++
++extern "C" long __do_syscall_ret(unsigned long ret) {
++	if(ret > -4096UL) {
++		errno = -ret;
++		return -1;
++	}
++	return ret;
++}
++
++#define SVR4_STUB() do { \
++	mlibc::infoLogger() << "mlibc: " << __func__ \
++		<< " is only scaffolded for sysdeps/svr4" << frg::endlog; \
++	return ENOSYS; \
++} while(0)
++
++namespace mlibc {
++
++void Sysdeps<LibcLog>::operator()(const char *message) {
++	size_t length = strlen(message);
++	syscall(SYS_write, 2, message, length);
++	char lf = '\n';
++	syscall(SYS_write, 2, &lf, 1);
++}
++
++void Sysdeps<LibcPanic>::operator()() {
++	sysdep<LibcLog>("mlibc panic on SVR4 scaffold");
++	__builtin_trap();
++}
++
++int Sysdeps<Read>::operator()(int fd, void *buffer, size_t count, ssize_t *bytes_read) {
++	auto ret = syscall(SYS_read, fd, buffer, count);
++	if(ret < 0)
++		return errno;
++	*bytes_read = ret;
++	return 0;
++}
++
++int Sysdeps<Write>::operator()(int fd, const void *buffer, size_t count, ssize_t *bytes_written) {
++	auto ret = syscall(SYS_write, fd, buffer, count);
++	if(ret < 0)
++		return errno;
++	*bytes_written = ret;
++	return 0;
++}
++
++int Sysdeps<Open>::operator()(const char *path, int flags, mode_t mode, int *fd) {
++	auto ret = syscall(SYS_open, path, flags, mode);
++	if(ret < 0)
++		return errno;
++	*fd = ret;
++	return 0;
++}
++
++int Sysdeps<Close>::operator()(int fd) {
++	if(syscall(SYS_close, fd) < 0)
++		return errno;
++	return 0;
++}
++
++int Sysdeps<Seek>::operator()(int fd, off_t offset, int whence, off_t *new_offset) {
++	auto ret = syscall(SYS_lseek, fd, offset, whence);
++	if(ret < 0)
++		return errno;
++	*new_offset = ret;
++	return 0;
++}
++
++int Sysdeps<AnonAllocate>::operator()(size_t size, void **pointer) {
++	return sysdep<VmMap>(nullptr, size, PROT_READ | PROT_WRITE,
++			MAP_PRIVATE | MAP_ANONYMOUS, -1, 0, pointer);
++}
++
++int Sysdeps<AnonFree>::operator()(void *pointer, size_t size) {
++	return sysdep<VmUnmap>(pointer, size);
++}
++
++int Sysdeps<VmMap>::operator()(void *hint, size_t size, int prot, int flags,
++		int fd, off_t offset, void **window) {
++	auto ret = syscall(SYS_mmap, hint, size, prot, flags, fd, offset);
++	if(ret < 0)
++		return errno;
++	*window = reinterpret_cast<void *>(ret);
++	return 0;
++}
++
++int Sysdeps<VmUnmap>::operator()(void *pointer, size_t size) {
++	if(syscall(SYS_munmap, pointer, size) < 0)
++		return errno;
++	return 0;
++}
++
++int Sysdeps<VmProtect>::operator()(void *pointer, size_t size, int prot) {
++	if(syscall(SYS_mprotect, pointer, size, prot) < 0)
++		return errno;
++	return 0;
++}
++
++[[noreturn]]
++void Sysdeps<Exit>::operator()(int status) {
++	syscall(SYS_exit, status);
++	__builtin_trap();
++}
++
++int Sysdeps<TcbSet>::operator()(void *) {
++	SVR4_STUB();
++}
++
++pid_t Sysdeps<FutexTid>::operator()() {
++	return static_cast<pid_t>(syscall(SYS_getpid));
++}
++
++int Sysdeps<ClockGet>::operator()(int, time_t *, long *) {
++	SVR4_STUB();
++}
++
++int Sysdeps<Stat>::operator()(fsfd_target, int, const char *, int, struct stat *) {
++	SVR4_STUB();
++}
++
++int Sysdeps<Access>::operator()(const char *path, int mode) {
++	if(syscall(SYS_access, path, mode) < 0)
++		return errno;
++	return 0;
++}
++
++} // namespace mlibc
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/access.h mlibc-workdir/sysdeps/svr4/include/abi-bits/access.h
+new file mode 100644
+index 0000000..320044a
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/access.h
+@@ -0,0 +1,9 @@
++#ifndef _ABIBITS_ACCESS_H
++#define _ABIBITS_ACCESS_H
++
++#define F_OK 0
++#define X_OK 1
++#define W_OK 2
++#define R_OK 4
++
++#endif /* _ABIBITS_ACCESS_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/auxv.h mlibc-workdir/sysdeps/svr4/include/abi-bits/auxv.h
+new file mode 100644
+index 0000000..b86f199
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/auxv.h
+@@ -0,0 +1,16 @@
++#ifndef _ABIBITS_AUXV_H
++#define _ABIBITS_AUXV_H
++
++#define AT_PLATFORM 15
++#define AT_HWCAP 16
++#define AT_CLKTCK 17
++#define AT_FPUCW 18
++#define AT_SECURE 23
++#define AT_RANDOM 25
++#define AT_HWCAP2 26
++#define AT_HWCAP3 29
++#define AT_HWCAP4 30
++#define AT_EXECFN 31
++#define AT_SYSINFO_EHDR 33
++
++#endif /* _ABIBITS_AUXV_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/blkcnt_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/blkcnt_t.h
+new file mode 100644
+index 0000000..fbbb9b8
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/blkcnt_t.h
+@@ -0,0 +1,8 @@
++#ifndef _ABIBITS_BLKCNT_T_H
++#define _ABIBITS_BLKCNT_T_H
++
++#include <bits/types.h>
++
++typedef __mlibc_int64 blkcnt_t;
++
++#endif /* _ABIBITS_BLKCNT_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/blksize_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/blksize_t.h
+new file mode 100644
+index 0000000..25abcbe
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/blksize_t.h
+@@ -0,0 +1,12 @@
++
++#ifndef _ABIBITS_BLKSIZE_T_H
++#define _ABIBITS_BLKSIZE_T_H
++
++#if defined(__x86_64__) || defined(__i386__) || defined(__m68k__)
++typedef long blksize_t;
++#elif defined(__riscv) || defined(__aarch64__) || defined(__loongarch64)
++typedef int blksize_t;
++#endif
++
++#endif /* _ABIBITS_BLKSIZE_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/clockid_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/clockid_t.h
+new file mode 100644
+index 0000000..8d92826
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/clockid_t.h
+@@ -0,0 +1,7 @@
++#ifndef _ABIBITS_CLOCKID_T_H
++#define _ABIBITS_CLOCKID_T_H
++
++typedef int clockid_t;
++
++#endif /* _ABIBITS_CLOCKID_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/dev_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/dev_t.h
+new file mode 100644
+index 0000000..c39ab67
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/dev_t.h
+@@ -0,0 +1,10 @@
++
++#ifndef _ABIBITS_DEV_T_H
++#define _ABIBITS_DEV_T_H
++
++#include <bits/types.h>
++
++typedef __mlibc_uint64 dev_t;
++
++#endif /* _ABIBITS_DEV_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/errno.h mlibc-workdir/sysdeps/svr4/include/abi-bits/errno.h
+new file mode 100644
+index 0000000..bac314f
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/errno.h
+@@ -0,0 +1,143 @@
++#ifndef _ABIBITS_ERRNO_H
++#define _ABIBITS_ERRNO_H
++
++#define EPERM            1
++#define ENOENT           2
++#define ESRCH            3
++#define EINTR            4
++#define EIO              5
++#define ENXIO            6
++#define E2BIG            7
++#define ENOEXEC          8
++#define EBADF            9
++#define ECHILD          10
++#define EAGAIN          11
++#define ENOMEM          12
++#define EACCES          13
++#define EFAULT          14
++#define ENOTBLK         15
++#define EBUSY           16
++#define EEXIST          17
++#define EXDEV           18
++#define ENODEV          19
++#define ENOTDIR         20
++#define EISDIR          21
++#define EINVAL          22
++#define ENFILE          23
++#define EMFILE          24
++#define ENOTTY          25
++#define ETXTBSY         26
++#define EFBIG           27
++#define ENOSPC          28
++#define ESPIPE          29
++#define EROFS           30
++#define EMLINK          31
++#define EPIPE           32
++#define EDOM            33
++#define ERANGE          34
++#define EDEADLK         35
++#define ENAMETOOLONG    36
++#define ENOLCK          37
++#define ENOSYS          38
++#define ENOTEMPTY       39
++#define ELOOP           40
++#define EWOULDBLOCK     EAGAIN
++#define ENOMSG          42
++#define EIDRM           43
++#define ECHRNG          44
++#define EL2NSYNC        45
++#define EL3HLT          46
++#define EL3RST          47
++#define ELNRNG          48
++#define EUNATCH         49
++#define ENOCSI          50
++#define EL2HLT          51
++#define EBADE           52
++#define EBADR           53
++#define EXFULL          54
++#define ENOANO          55
++#define EBADRQC         56
++#define EBADSLT         57
++#define EDEADLOCK       EDEADLK
++#define EBFONT          59
++#define ENOSTR          60
++#define ENODATA         61
++#define ETIME           62
++#define ENOSR           63
++#define ENONET          64
++#define ENOPKG          65
++#define EREMOTE         66
++#define ENOLINK         67
++#define EADV            68
++#define ESRMNT          69
++#define ECOMM           70
++#define EPROTO          71
++#define EMULTIHOP       72
++#define EDOTDOT         73
++#define EBADMSG         74
++#define EOVERFLOW       75
++#define ENOTUNIQ        76
++#define EBADFD          77
++#define EREMCHG         78
++#define ELIBACC         79
++#define ELIBBAD         80
++#define ELIBSCN         81
++#define ELIBMAX         82
++#define ELIBEXEC        83
++#define EILSEQ          84
++#define ERESTART        85
++#define ESTRPIPE        86
++#define EUSERS          87
++#define ENOTSOCK        88
++#define EDESTADDRREQ    89
++#define EMSGSIZE        90
++#define EPROTOTYPE      91
++#define ENOPROTOOPT     92
++#define EPROTONOSUPPORT 93
++#define ESOCKTNOSUPPORT 94
++#define EOPNOTSUPP      95
++#define ENOTSUP         EOPNOTSUPP
++#define EPFNOSUPPORT    96
++#define EAFNOSUPPORT    97
++#define EADDRINUSE      98
++#define EADDRNOTAVAIL   99
++#define ENETDOWN        100
++#define ENETUNREACH     101
++#define ENETRESET       102
++#define ECONNABORTED    103
++#define ECONNRESET      104
++#define ENOBUFS         105
++#define EISCONN         106
++#define ENOTCONN        107
++#define ESHUTDOWN       108
++#define ETOOMANYREFS    109
++#define ETIMEDOUT       110
++#define ECONNREFUSED    111
++#define EHOSTDOWN       112
++#define EHOSTUNREACH    113
++#define EALREADY        114
++#define EINPROGRESS     115
++#define ESTALE          116
++#define EUCLEAN         117
++#define ENOTNAM         118
++#define ENAVAIL         119
++#define EISNAM          120
++#define EREMOTEIO       121
++#define EDQUOT          122
++#define ENOMEDIUM       123
++#define EMEDIUMTYPE     124
++#define ECANCELED       125
++#define ENOKEY          126
++#define EKEYEXPIRED     127
++#define EKEYREVOKED     128
++#define EKEYREJECTED    129
++#define EOWNERDEAD      130
++#define ENOTRECOVERABLE 131
++#define ERFKILL         132
++#define EHWPOISON       133
++
++
++/* This is mlibc-specific. */
++#define EIEIO           4095
++
++#endif /* _ABIBITS_ERRNO_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/fcntl.h mlibc-workdir/sysdeps/svr4/include/abi-bits/fcntl.h
+new file mode 100644
+index 0000000..83800f2
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/fcntl.h
+@@ -0,0 +1,168 @@
++#ifndef _ABIBITS_FCNTL_H
++#define _ABIBITS_FCNTL_H
++
++#include <mlibc-config.h>
++#include <abi-bits/pid_t.h>
++
++#define O_PATH 010000000
++
++#define O_ACCMODE (03 | O_PATH)
++#define O_RDONLY   00
++#define O_WRONLY   01
++#define O_RDWR     02
++
++#define O_CREAT         0100
++#define O_EXCL          0200
++#define O_NOCTTY        0400
++#define O_TRUNC        01000
++#define O_APPEND       02000
++#define O_NONBLOCK     04000
++#define O_DSYNC       010000
++#define O_ASYNC       020000
++#define O_CLOEXEC   02000000
++#define O_SYNC      04010000
++#define O_RSYNC     04010000
++#define O_NOATIME   01000000
++
++#if defined(__x86_64__) || defined(__i386__) || defined(__riscv) || defined(__loongarch64)
++#define O_DIRECT      040000
++#define O_LARGEFILE  0100000
++#define O_DIRECTORY  0200000
++#define O_NOFOLLOW   0400000
++#elif defined(__aarch64__) || defined(__m68k__)
++#define O_DIRECTORY   040000
++#define O_NOFOLLOW   0100000
++#define O_DIRECT     0200000
++#define O_LARGEFILE  0400000
++#else
++#warning "Missing <fcntl.h> support for this architecture!"
++#endif
++
++#define O_TMPFILE (020000000 | O_DIRECTORY)
++
++#define O_EXEC O_PATH
++#define O_SEARCH O_PATH
++#define O_TTY_INIT 0
++
++#define F_DUPFD  0
++#define F_GETFD  1
++#define F_SETFD  2
++#define F_GETFL  3
++#define F_SETFL  4
++
++#define F_SETOWN 8
++#define F_GETOWN 9
++#define F_SETSIG 10
++#define F_GETSIG 11
++
++#if __INTPTR_WIDTH__ == 64
++
++#define F_GETLK64 5
++#define F_SETLK64 6
++#define F_SETLKW64 7
++
++#else /* __INTPTR_WIDTH__ == 64 */
++
++#define F_GETLK64 12
++#define F_SETLK64 13
++#define F_SETLKW64 14
++
++#endif
++
++#define F_GETLK F_GETLK64
++#define F_SETLK F_SETLK64
++#define F_SETLKW F_SETLKW64
++
++#define F_SETOWN_EX 15
++#define F_GETOWN_EX 16
++
++#define F_GETOWNER_UIDS 17
++
++#define F_SETLEASE 1024
++#define F_GETLEASE 1025
++#define F_NOTIFY 1026
++#define F_DUPFD_CLOEXEC 1030
++#define F_SETPIPE_SZ 1031
++#define F_GETPIPE_SZ 1032
++#define F_ADD_SEALS 1033
++#define F_GET_SEALS 1034
++
++#define F_SEAL_SEAL 0x0001
++#define F_SEAL_SHRINK 0x0002
++#define F_SEAL_GROW 0x0004
++#define F_SEAL_WRITE 0x0008
++
++#define F_OFD_GETLK 36
++#define F_OFD_SETLK 37
++#define F_OFD_SETLKW 38
++
++#define F_RDLCK 0
++#define F_WRLCK 1
++#define F_UNLCK 2
++
++#define FD_CLOEXEC 1
++
++#define AT_FDCWD -100
++#define AT_SYMLINK_NOFOLLOW 0x100
++#define AT_REMOVEDIR 0x200
++#define AT_SYMLINK_FOLLOW 0x400
++#define AT_EACCESS 0x200
++
++#if defined(_GNU_SOURCE)
++#define AT_NO_AUTOMOUNT 0x800
++#define AT_EMPTY_PATH 0x1000
++#endif
++
++#if __MLIBC_LINUX_OPTION && defined(_GNU_SOURCE)
++
++#define DN_ACCESS 1
++#define DN_MODIFY 2
++#define DN_CREATE 4
++#define DN_DELETE 8
++#define DN_RENAME 16
++#define DN_ATTRIB 32
++#define DN_MULTISHOT 0x80000000
++
++#define AT_STATX_SYNC_AS_STAT 0x0000
++#define AT_STATX_FORCE_SYNC 0x2000
++#define AT_STATX_DONT_SYNC 0x4000
++#define AT_STATX_SYNC_TYPE 0x6000
++#define AT_RECURSIVE 0x8000
++
++#endif /* __MLIBC_LINUX_OPTION && defined(_GNU_SOURCE) */
++
++#if defined(_GNU_SOURCE) || __MLIBC_POSIX2024
++struct f_owner_ex {
++	int type;
++	pid_t pid;
++};
++#endif /* defined(_GNU_SOURCE) || __MLIBC_POSIX2024 */
++
++#define F_OWNER_TID 0
++#define F_OWNER_PID 1
++#define F_OWNER_PGRP 2
++
++#define POSIX_FADV_NORMAL 0
++#define POSIX_FADV_RANDOM 1
++#define POSIX_FADV_SEQUENTIAL 2
++#define POSIX_FADV_WILLNEED 3
++#define POSIX_FADV_DONTNEED 4
++#define POSIX_FADV_NOREUSE 5
++
++#define S_IRWXU 0700
++#define S_IRUSR 0400
++#define S_IWUSR 0200
++#define S_IXUSR 0100
++#define S_IRWXG 070
++#define S_IRGRP 040
++#define S_IWGRP 020
++#define S_IXGRP 010
++#define S_IRWXO 07
++#define S_IROTH 04
++#define S_IWOTH 02
++#define S_IXOTH 01
++#define S_ISUID 04000
++#define S_ISGID 02000
++#define S_ISVTX 01000
++
++#endif /* _ABIBITS_FCNTL_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/fd_set.h mlibc-workdir/sysdeps/svr4/include/abi-bits/fd_set.h
+new file mode 100644
+index 0000000..380a56c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/fd_set.h
+@@ -0,0 +1,12 @@
++#ifndef _ABIBITS_FD_SET_H
++#define _ABIBITS_FD_SET_H
++
++#include <bits/types.h>
++
++#define FD_SETSIZE 1024
++
++typedef struct __attribute__((__aligned__(__alignof__(long)))) {
++	__mlibc_uint8 fds_bits[128];
++} fd_set;
++
++#endif /* _ABIBITS_FD_SET_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/fsblkcnt_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/fsblkcnt_t.h
+new file mode 100644
+index 0000000..0d74456
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/fsblkcnt_t.h
+@@ -0,0 +1,8 @@
++#ifndef _ABIBITS_FSBLKCNT_T_H
++#define _ABIBITS_FSBLKCNT_T_H
++
++#include <bits/types.h>
++
++typedef __mlibc_uint64 fsblkcnt_t;
++
++#endif /* _ABIBITS_FSBLKCNT_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/fsfilcnt_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/fsfilcnt_t.h
+new file mode 100644
+index 0000000..1abda9a
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/fsfilcnt_t.h
+@@ -0,0 +1,8 @@
++#ifndef _ABIBITS_FSFILCNT_T_H
++#define _ABIBITS_FSFILCNT_T_H
++
++#include <bits/types.h>
++
++typedef __mlibc_uint64 fsfilcnt_t;
++
++#endif /* _ABIBITS_FSFILCNT_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/gid_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/gid_t.h
+new file mode 100644
+index 0000000..f513e25
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/gid_t.h
+@@ -0,0 +1,8 @@
++
++#ifndef _ABIBITS_GID_T_H
++#define _ABIBITS_GID_T_H
++
++typedef unsigned int gid_t;
++
++#endif /* _ABIBITS_GID_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/in.h mlibc-workdir/sysdeps/svr4/include/abi-bits/in.h
+new file mode 100644
+index 0000000..8c1e276
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/in.h
+@@ -0,0 +1,251 @@
++#ifndef _ABIBITS_IN_H
++#define _ABIBITS_IN_H
++
++#include <mlibc-config.h>
++#include <abi-bits/sa_family_t.h>
++#include <abi-bits/sockaddr_storage.h>
++#include <bits/posix/in_addr_t.h>
++#include <bits/posix/in_port_t.h>
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct in_addr {
++	in_addr_t s_addr;
++};
++
++struct sockaddr_in {
++	sa_family_t sin_family;
++	in_port_t sin_port;
++	struct in_addr sin_addr;
++	uint8_t sin_zero[8];
++};
++
++#if !__UAPI_DEF_IN6_ADDR
++struct in6_addr {
++	union {
++		uint8_t __s6_addr[16];
++		uint16_t __s6_addr16[8];
++		uint32_t __s6_addr32[4];
++	} __in6_union;
++};
++#define s6_addr __in6_union.__s6_addr
++#define s6_addr16 __in6_union.__s6_addr16
++#define s6_addr32 __in6_union.__s6_addr32
++#endif /* !__UAPI_DEF_IN6_ADDR */
++
++#if !__UAPI_DEF_SOCKADDR_IN6
++struct sockaddr_in6 {
++	sa_family_t     sin6_family;
++	in_port_t       sin6_port;
++	uint32_t        sin6_flowinfo;
++	struct in6_addr sin6_addr;
++	uint32_t        sin6_scope_id;
++};
++#endif /* !__UAPI_DEF_SOCKADDR_IN6 */
++
++#if !__UAPI_DEF_IPV6_MREQ
++struct ipv6_mreq {
++	struct in6_addr ipv6mr_multiaddr;
++	unsigned        ipv6mr_interface;
++};
++#endif /* !__UAPI_DEF_IPV6_MREQ */
++
++#if !__UAPI_DEF_IN6_PKTINFO
++#if defined(_GNU_SOURCE)
++struct in6_pktinfo {
++	struct in6_addr ipi6_addr;
++	uint32_t ipi6_ifindex;
++};
++#endif /* defined(_GNU_SOURCE) */
++#endif /* !__UAPI_DEF_IN6_PKTINFO */
++
++#if defined(_DEFAULT_SOURCE)
++struct ip_mreq {
++	struct in_addr imr_multiaddr;
++	struct in_addr imr_interface;
++};
++
++struct ip_mreq_source {
++	struct in_addr imr_multiaddr;
++	struct in_addr imr_interface;
++	struct in_addr imr_sourceaddr;
++};
++
++struct ip_mreqn {
++	struct in_addr imr_multiaddr;
++	struct in_addr imr_address;
++	int imr_ifindex;
++};
++
++struct in_pktinfo {
++	int ipi_ifindex;
++	struct in_addr ipi_spec_dst;
++	struct in_addr ipi_addr;
++};
++
++struct group_req {
++	uint32_t gr_interface;
++	struct sockaddr_storage gr_group;
++};
++
++struct group_source_req {
++	uint32_t gsr_interface;
++	struct sockaddr_storage gsr_group;
++	struct sockaddr_storage gsr_source;
++};
++
++#endif /* defined(_DEFAULT_SOURCE) */
++
++#ifdef __cplusplus
++}
++#endif
++
++#define INADDR_ANY        ((in_addr_t) 0x00000000)
++#define INADDR_BROADCAST  ((in_addr_t) 0xffffffff)
++#define INADDR_NONE       ((in_addr_t) 0xffffffff)
++#define INADDR_LOOPBACK   ((in_addr_t) 0x7f000001)
++
++#define INADDR_UNSPEC_GROUP     ((in_addr_t) 0xe0000000)
++#define INADDR_ALLHOSTS_GROUP   ((in_addr_t) 0xe0000001)
++#define INADDR_ALLRTRS_GROUP    ((in_addr_t) 0xe0000002)
++#define INADDR_ALLSNOOPERS_GROUP ((in_addr_t) 0xe000006a)
++#define INADDR_MAX_LOCAL_GROUP  ((in_addr_t) 0xe00000ff)
++
++#define IN6ADDR_ANY_INIT      { { { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 } } }
++#define IN6ADDR_LOOPBACK_INIT { { { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1 } } }
++
++#define INET_ADDRSTRLEN  16
++#define INET6_ADDRSTRLEN 46
++
++#define IPPORT_RESERVED 1024
++
++#define IPPROTO_IP       0
++#define IPPROTO_HOPOPTS  0
++#define IPPROTO_ICMP     1
++#define IPPROTO_IGMP     2
++#define IPPROTO_IPIP     4
++#define IPPROTO_TCP      6
++#define IPPROTO_EGP      8
++#define IPPROTO_PUP      12
++#define IPPROTO_UDP      17
++#define IPPROTO_IDP      22
++#define IPPROTO_TP       29
++#define IPPROTO_DCCP     33
++#define IPPROTO_IPV6     41
++#define IPPROTO_ROUTING  43
++#define IPPROTO_FRAGMENT 44
++#define IPPROTO_RSVP     46
++#define IPPROTO_GRE      47
++#define IPPROTO_ESP      50
++#define IPPROTO_AH       51
++#define IPPROTO_ICMPV6   58
++#define IPPROTO_NONE     59
++#define IPPROTO_DSTOPTS  60
++#define IPPROTO_MTP      92
++#define IPPROTO_BEETPH   94
++#define IPPROTO_ENCAP    98
++#define IPPROTO_PIM      103
++#define IPPROTO_COMP     108
++#define IPPROTO_SCTP     132
++#define IPPROTO_MH       135
++#define IPPROTO_UDPLITE  136
++#define IPPROTO_MPLS     137
++#define IPPROTO_RAW      255
++#define IPPROTO_MAX      256
++
++#define IP_TOS 1
++#define IP_TTL 2
++#define IP_HDRINCL 3
++#define IP_OPTIONS 4
++#define IP_RECVOPTS 6
++#define IP_RETOPTS 7
++#define IP_PKTINFO 8
++#define IP_PKTOPTIONS 9
++#define IP_MTU_DISCOVER 10
++#define IP_RECVERR 11
++#define IP_RECVTTL 12
++#define IP_MTU 14
++#define IP_MULTICAST_IF 32
++#define IP_MULTICAST_TTL 33
++#define IP_MULTICAST_LOOP 34
++#define IP_ADD_MEMBERSHIP 35
++#define IP_DROP_MEMBERSHIP 36
++#define IP_UNBLOCK_SOURCE 37
++#define IP_BLOCK_SOURCE 38
++#define IP_ADD_SOURCE_MEMBERSHIP 39
++#define IP_DROP_SOURCE_MEMBERSHIP 40
++
++#if defined(_DEFAULT_SOURCE)
++#define IP_UNICAST_IF 50
++#endif /* defined(_DEFAULT_SOURCE) */
++
++#define IPV6_2292PKTOPTIONS 6
++#define IPV6_CHECKSUM 7
++#define IPV6_2292HOPLIMIT 8
++#define IPV6_UNICAST_HOPS 16
++#define IPV6_MULTICAST_IF 17
++#define IPV6_MULTICAST_HOPS 18
++#define IPV6_MULTICAST_LOOP 19
++#define IPV6_JOIN_GROUP 20
++#define IPV6_LEAVE_GROUP 21
++#define IPV6_MTU_DISCOVER 23
++#define IPV6_MTU 24
++#define IPV6_RECVERR 25
++#define IPV6_V6ONLY 26
++#define IPV6_RECVPKTINFO 49
++#define IPV6_PKTINFO 50
++#define IPV6_RECVHOPLIMIT 51
++#define IPV6_HOPLIMIT 52
++
++#define IPV6_RECVTCLASS	66
++#define IPV6_TCLASS 67
++
++#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
++#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
++
++#define IPV6_PMTUDISC_DONT 0
++#define IPV6_PMTUDISC_WANT 1
++#define IPV6_PMTUDISC_DO 2
++#define IPV6_PMTUDISC_PROBE 3
++#define IPV6_PMTUDISC_INTERFACE 4
++#define IPV6_PMTUDISC_OMIT 5
++
++#define IP_PMTUDISC_DONT 0
++#define IP_PMTUDISC_WANT 1
++#define IP_PMTUDISC_DO 2
++#define IP_PMTUDISC_PROBE 3
++#define IP_PMTUDISC_INTERFACE 4
++#define IP_PMTUDISC_OMIT 5
++
++#if defined(_DEFAULT_SOURCE)
++#define MCAST_JOIN_GROUP 42
++#define MCAST_BLOCK_SOURCE 43
++#define MCAST_UNBLOCK_SOURCE 44
++#define MCAST_JOIN_SOURCE_GROUP 46
++#define MCAST_LEAVE_SOURCE_GROUP 47
++#endif /* defined(_DEFAULT_SOURCE) */
++
++#if __MLIBC_LINUX_OPTION
++
++#define __UAPI_DEF_IN_ADDR 0
++#define __UAPI_DEF_IN_CLASS 0
++#define __UAPI_DEF_IN_IPPROTO 0
++#define __UAPI_DEF_IN_PKTINFO 0
++#define __UAPI_DEF_IP_MREQ 0
++#define __UAPI_DEF_SOCKADDR_IN 0
++
++#define __UAPI_DEF_IN6_ADDR 0
++#define __UAPI_DEF_IN6_ADDR_ALT 0
++#define __UAPI_DEF_IN6_PKTINFO 0
++#define __UAPI_DEF_IP6_MTUINFO 0
++#define __UAPI_DEF_IPPROTO_V6 0
++#define __UAPI_DEF_IPV6_MREQ 0
++#define __UAPI_DEF_IPV6_OPTIONS 0
++#define __UAPI_DEF_SOCKADDR_IN6 0
++
++#endif /* __MLIBC_LINUX_OPTION */
++
++#endif /* _ABITBITS_IN_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/ino_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/ino_t.h
+new file mode 100644
+index 0000000..3f48c32
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/ino_t.h
+@@ -0,0 +1,11 @@
++
++#ifndef _ABIBITS_INO_T_H
++#define _ABIBITS_INO_T_H
++
++#include <bits/types.h>
++
++typedef __mlibc_uint64 ino_t;
++typedef ino_t ino64_t;
++
++#endif /* _ABIBITS_INO_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/ipc.h mlibc-workdir/sysdeps/svr4/include/abi-bits/ipc.h
+new file mode 100644
+index 0000000..b5f9f11
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/ipc.h
+@@ -0,0 +1,50 @@
++#ifndef _ABIBITS_IPC_H
++#define _ABIBITS_IPC_H
++
++#include <abi-bits/uid_t.h>
++#include <abi-bits/gid_t.h>
++#include <abi-bits/mode_t.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#define IPC_CREAT 01000
++#define IPC_EXCL 02000
++#define IPC_NOWAIT 04000
++
++#define IPC_RMID 0
++#define IPC_SET 1
++#define IPC_STAT 2
++#define IPC_INFO 3
++
++#define IPC_PRIVATE ((key_t) 0)
++
++#if defined(__aarch64__) || defined(__i386__) || defined(__m68k__)
++#define IPC_64 0x100
++#elif defined(__x86_64__) || (defined(__riscv) && __riscv_xlen == 64) || defined(__loongarch64)
++#define IPC_64 0
++#else
++#error "Unsupported arch!"
++#endif
++
++typedef int key_t;
++
++struct ipc64_perm {
++	key_t __ipc_perm_key;
++	uid_t uid;
++	gid_t gid;
++	uid_t cuid;
++	gid_t cgid;
++	mode_t mode;
++	int __ipc_perm_seq;
++	long __unused[2];
++};
++
++#define ipc_perm ipc64_perm
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/limits.h mlibc-workdir/sysdeps/svr4/include/abi-bits/limits.h
+new file mode 100644
+index 0000000..c555aed
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/limits.h
+@@ -0,0 +1,10 @@
++#ifndef _ABIBITS_LIMITS_H
++#define _ABIBITS_LIMITS_H
++
++#define __MLIBC_IOV_MAX 1024
++#define __MLIBC_LOGIN_NAME_MAX 256
++#define __MLIBC_HOST_NAME_MAX 64
++#define __MLIBC_NAME_MAX 255
++#define __MLIBC_OPEN_MAX 256
++
++#endif /*_ABIBITS_LIMITS_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/mode_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/mode_t.h
+new file mode 100644
+index 0000000..8deed27
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/mode_t.h
+@@ -0,0 +1,8 @@
++
++#ifndef _ABIBITS_MODE_T_H
++#define _ABIBITS_MODE_T_H
++
++typedef unsigned int mode_t;
++
++#endif /* _ABIBITS_MODE_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/mqueue.h mlibc-workdir/sysdeps/svr4/include/abi-bits/mqueue.h
+new file mode 100644
+index 0000000..1e2d3eb
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/mqueue.h
+@@ -0,0 +1,21 @@
++#ifndef _ABIBITS_MQUEUE_H
++#define _ABIBITS_MQUEUE_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct mq_attr {
++	long mq_flags;
++	long mq_maxmsg;
++	long mq_msgsize;
++	long mq_curmsgs;
++	long __pad[4];
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_MQUEUE_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/msg.h mlibc-workdir/sysdeps/svr4/include/abi-bits/msg.h
+new file mode 100644
+index 0000000..9798c6c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/msg.h
+@@ -0,0 +1,45 @@
++#ifndef _ABIBITS_MSG_H
++#define _ABIBITS_MSG_H
++
++#include <sys/ipc.h>
++#include <bits/ansi/time_t.h>
++#include <bits/types.h>
++#include <abi-bits/pid_t.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef unsigned long msglen_t;
++typedef unsigned long msgqnum_t;
++
++struct msqid64_ds {
++	struct ipc64_perm msg_perm;
++#if (__INTPTR_WIDTH__ == 64) /* || x32 ABI */
++	time_t msg_stime;
++	time_t msg_rtime;
++	time_t msg_ctime;
++#else
++	unsigned long msg_stime;
++	unsigned long msg_stime_high;
++	unsigned long msg_rtime;
++	unsigned long msg_rtime_high;
++	unsigned long msg_ctime;
++	unsigned long msg_ctime_high;
++#endif
++	unsigned long msg_cbytes;
++	msgqnum_t msg_qnum;
++	msglen_t msg_qbytes;
++	pid_t msg_lspid;
++	pid_t msg_lrpid;
++	unsigned long __unused[2];
++};
++
++#define msqid_ds msqid64_ds
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_MSG_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/nlink_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/nlink_t.h
+new file mode 100644
+index 0000000..c9c6416
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/nlink_t.h
+@@ -0,0 +1,12 @@
++
++#ifndef _ABIBITS_NLINK_T_H
++#define _ABIBITS_NLINK_T_H
++
++#if defined(__x86_64__)
++typedef unsigned long nlink_t;
++#else
++typedef unsigned int nlink_t;
++#endif
++
++#endif /* _ABIBITS_NLINK_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/pid_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/pid_t.h
+new file mode 100644
+index 0000000..9591edb
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/pid_t.h
+@@ -0,0 +1,8 @@
++
++#ifndef _ABIBITS_PID_T_H
++#define _ABIBITS_PID_T_H
++
++typedef int pid_t;
++
++#endif /* _ABIBITS_PID_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/poll.h mlibc-workdir/sysdeps/svr4/include/abi-bits/poll.h
+new file mode 100644
+index 0000000..f28dad7
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/poll.h
+@@ -0,0 +1,24 @@
++#ifndef _ABIBITS_POLL_H
++#define _ABIBITS_POLL_H
++
++#define POLLIN 0x0001
++#define POLLPRI 0x0002
++#define POLLOUT 0x0004
++#define POLLERR 0x0008
++#define POLLHUP 0x0010
++#define POLLNVAL 0x0020
++#define POLLRDNORM 0x0040
++#define POLLRDBAND 0x0080
++#define POLLRDHUP 0x2000
++
++#if defined(__x86_64__) || defined(__i386__) || defined(__aarch64__) || defined(__riscv) || defined(__loongarch64)
++#define POLLWRNORM 0x0100
++#define POLLWRBAND 0x0200
++#elif defined(__m68k__)
++#define POLLWRNORM POLLOUT
++#define POLLWRBAND 0x0100
++#else
++#warning "Missing poll.h definitions for this architecture!"
++#endif
++
++#endif /* _ABIBITS_POLL_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/resource.h mlibc-workdir/sysdeps/svr4/include/abi-bits/resource.h
+new file mode 100644
+index 0000000..e1a6836
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/resource.h
+@@ -0,0 +1,72 @@
++#ifndef _ABIBITS_RESOURCE_H
++#define _ABIBITS_RESOURCE_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include <mlibc-config.h>
++#include <bits/timeval.h>
++
++#if defined(_GNU_SOURCE)
++#define PRIO_MIN (-20)
++#define PRIO_MAX 20
++#endif /* defined(_GNU_SOURCE) */
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define PRIO_PROCESS 0
++#define PRIO_PGRP 1
++#define PRIO_USER 2
++
++#define RUSAGE_SELF 0
++#define RUSAGE_CHILDREN -1
++
++#define RLIMIT_CPU 0
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#define RLIMIT_FSIZE 1
++#define RLIMIT_DATA 2
++#define RLIMIT_STACK 3
++#define RLIMIT_CORE 4
++#define RLIMIT_NOFILE 7
++#define RLIMIT_AS 9
++
++#if defined(_DEFAULT_SOURCE)
++#define RLIMIT_RSS 5
++#define RLIMIT_NPROC 6
++#define RLIMIT_MEMLOCK 8
++#define RLIMIT_LOCKS 10
++#define RLIMIT_SIGPENDING 11
++#define RLIMIT_MSGQUEUE 12
++#define RLIMIT_NICE 13
++#define RLIMIT_RTPRIO 14
++#define RLIMIT_RTTIME 15
++#define RLIMIT_NLIMITS 16
++#endif
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++struct rusage {
++	struct timeval ru_utime;
++	struct timeval ru_stime;
++	long ru_maxrss;
++	long ru_ixrss;
++	long ru_idrss;
++	long ru_isrss;
++	long ru_minflt;
++	long ru_majflt;
++	long ru_nswap;
++	long ru_inblock;
++	long ru_oublock;
++	long ru_msgsnd;
++	long ru_msgrcv;
++	long ru_nsignals;
++	long ru_nvcsw;
++	long ru_nivcsw;
++};
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_RESOURCE_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/rlim_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/rlim_t.h
+new file mode 100644
+index 0000000..1f2871c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/rlim_t.h
+@@ -0,0 +1,10 @@
++#ifndef _ABIBITS_RLIM_T_H
++#define _ABIBITS_RLIM_T_H
++
++#if __INTPTR_WIDTH__ == 32
++typedef unsigned long long int rlim_t;
++#else
++typedef unsigned long int rlim_t;
++#endif
++
++#endif /* _ABIBITS_RLIM_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sa_family_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sa_family_t.h
+new file mode 100644
+index 0000000..4d4a21f
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sa_family_t.h
+@@ -0,0 +1,6 @@
++#ifndef _ABIBITS_SA_FAMILY_T_H
++#define _ABIBITS_SA_FAMILY_T_H
++
++typedef unsigned short sa_family_t;
++
++#endif /* _ABIBITS_SA_FAMILY_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/seek-whence.h mlibc-workdir/sysdeps/svr4/include/abi-bits/seek-whence.h
+new file mode 100644
+index 0000000..7add0a1
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/seek-whence.h
+@@ -0,0 +1,10 @@
++#ifndef _ABIBITS_SEEK_WHENCE_H
++#define _ABIBITS_SEEK_WHENCE_H
++
++#define SEEK_SET 0
++#define SEEK_CUR 1
++#define SEEK_END 2
++#define SEEK_DATA 3
++#define SEEK_HOLE 4
++
++#endif /* _ABIBITS_SEEK_WHENCE_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sem.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sem.h
+new file mode 100644
+index 0000000..3944d9a
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sem.h
+@@ -0,0 +1,30 @@
++#ifndef _ABIBITS_SEM_H
++#define _ABIBITS_SEM_H
++
++#include <abi-bits/time.h>
++#include <abi-bits/ipc.h>
++
++#define GETPID 11
++#define GETVAL 12
++#define GETALL 13
++#define SETVAL 16
++#define SETALL 17
++
++#define SEM_UNDO 0x1000
++
++struct sembuf {
++	unsigned short int sem_num;
++	short int sem_op;
++	short int sem_flg;
++};
++
++struct semid_ds {
++	struct ipc_perm sem_perm;
++	time_t          sem_otime;
++	time_t          sem_ctime;
++
++	unsigned long   sem_nsems;
++	unsigned long   __unused[2];
++};
++
++#endif /* _ABIBITS_SEM_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/shm.h mlibc-workdir/sysdeps/svr4/include/abi-bits/shm.h
+new file mode 100644
+index 0000000..b6605a2
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/shm.h
+@@ -0,0 +1,104 @@
++#ifndef _ABIBITS_SHM_H
++#define _ABIBITS_SHM_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#include <bits/ansi/time_t.h>
++#include <abi-bits/pid_t.h>
++
++#include <unistd.h>
++#include <sys/ipc.h>
++
++#define SHM_R 0400
++#define SHM_W 0200
++
++#define SHM_RDONLY 010000
++#define SHM_RND 020000
++#define SHM_REMAP 040000
++#define SHM_EXEC 0100000
++
++#define SHM_LOCK 11
++#define SHM_UNLOCK 12
++#define SHM_STAT 13
++#define SHM_INFO 14
++#define SHM_STAT_ANY 15
++#define SHM_DEST 01000
++#define SHM_LOCKED 02000
++#define SHM_HUGETLB 04000
++#define SHM_NORESERVE 010000
++
++#define SHM_HUGE_SHIFT 26
++#define SHM_HUGE_MASK 0x3f
++#define SHM_HUGE_64KB (16 << 26)
++#define SHM_HUGE_512KB (19 << 26)
++#define SHM_HUGE_1MB (20 << 26)
++#define SHM_HUGE_2MB (21 << 26)
++#define SHM_HUGE_8MB (23 << 26)
++#define SHM_HUGE_16MB (24 << 26)
++#define SHM_HUGE_32MB (25 << 26)
++#define SHM_HUGE_256MB (28 << 26)
++#define SHM_HUGE_512MB (29 << 26)
++#define SHM_HUGE_1GB (30 << 26)
++#define SHM_HUGE_2GB (31 << 26)
++#define SHM_HUGE_16GB (34U << 26)
++
++typedef unsigned long shmatt_t;
++
++#if defined(__i386__) || defined(__m68k__)
++struct shmid_ds {
++	struct ipc_perm shm_perm;
++	size_t shm_segsz;
++	unsigned long shm_atime;
++	unsigned long __shm_atime_hi;
++	unsigned long shm_dtime;
++	unsigned long __shm_dtime_hi;
++	unsigned long shm_ctime;
++	unsigned long __shm_ctime_hi;
++	pid_t shm_cpid;
++	pid_t shm_lpid;
++	unsigned long shm_nattch;
++	unsigned long __unused[2];
++};
++#elif defined(__x86_64__) || defined(__aarch64__) || (defined(__riscv) && __riscv_xlen == 64) || defined(__loongarch64)
++struct shmid_ds {
++	struct ipc_perm shm_perm;
++	size_t shm_segsz;
++	time_t shm_atime;
++	time_t shm_dtime;
++	time_t shm_ctime;
++	pid_t shm_cpid;
++	pid_t shm_lpid;
++	unsigned long shm_nattch;
++	unsigned long __unused[2];
++};
++#else
++#error "Missing architecture specific code."
++#endif
++
++struct shminfo {
++	unsigned long shmmax;
++	unsigned long shmmin;
++	unsigned long shmmni;
++	unsigned long shmseg;
++	unsigned long shmall;
++	unsigned long __unused[4];
++};
++
++struct shm_info {
++	int used_ids;
++	unsigned long shm_tot;
++	unsigned long shm_rss;
++	unsigned long shm_swp;
++	unsigned long swap_attempts;
++	unsigned long swap_successes;
++};
++
++#define SHMLBA (getpagesize())
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_SHM_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sig-limits.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sig-limits.h
+new file mode 100644
+index 0000000..72bc54d
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sig-limits.h
+@@ -0,0 +1,12 @@
++#ifndef _ABIBITS_SIG_LIMITS_H
++#define _ABIBITS_SIG_LIMITS_H
++
++#include <mlibc-config.h>
++
++#define NSIG_MAX 1024
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define NZERO 20
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#endif /*_ABIBITS_SIG_LIMITS_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sigevent.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sigevent.h
+new file mode 100644
+index 0000000..41e1d81
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sigevent.h
+@@ -0,0 +1,24 @@
++#ifndef _ABIBITS_SIGEVENT_H
++#define _ABIBITS_SIGEVENT_H
++
++#include <abi-bits/sigval.h>
++#include <abi-bits/pid_t.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct sigevent {
++	union sigval sigev_value;
++	int sigev_notify;
++	int sigev_signo;
++	void (*sigev_notify_function)(union sigval);
++	struct __mlibc_threadattr *sigev_notify_attributes;
++	pid_t sigev_notify_thread_id;
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_SIGEVENT_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/signal.h mlibc-workdir/sysdeps/svr4/include/abi-bits/signal.h
+new file mode 100644
+index 0000000..52224c0
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/signal.h
+@@ -0,0 +1,714 @@
++#ifndef _ABIBITS_SIGNAL_H
++#define _ABIBITS_SIGNAL_H
++
++#include <mlibc-config.h>
++
++#include <abi-bits/pid_t.h>
++#include <abi-bits/sigevent.h>
++#include <abi-bits/sigset_t.h>
++#include <abi-bits/uid_t.h>
++#include <bits/ansi/clock_t.h>
++#include <bits/size_t.h>
++#include <bits/types.h>
++
++#if defined(_DEFAULT_SOURCE) || (__MLIBC_POSIX1 && !__MLIBC_POSIX2024)
++#define POLL_IN 1
++#define POLL_OUT 2
++#define POLL_MSG 3
++#define POLL_ERR 4
++#define POLL_PRI 5
++#define POLL_HUP 6
++#endif
++
++/* struct taken from musl. */
++
++typedef struct {
++	int si_signo, si_errno, si_code;
++	union {
++		char __pad[128 - 2*sizeof(int) - sizeof(long)];
++		struct {
++			union {
++				struct {
++					pid_t si_pid;
++					uid_t si_uid;
++				} __piduid;
++				struct {
++					int si_timerid;
++					int si_overrun;
++				} __timer;
++			} __first;
++			union {
++				union sigval si_value;
++				struct {
++					int si_status;
++					clock_t si_utime, si_stime;
++				} __sigchld;
++			} __second;
++		} __si_common;
++		struct {
++			void *si_addr;
++			short si_addr_lsb;
++			union {
++				struct {
++					void *si_lower;
++					void *si_upper;
++				} __addr_bnd;
++				unsigned si_pkey;
++			} __first;
++		} __sigfault;
++		struct {
++			long si_band;
++			int si_fd;
++		} __sigpoll;
++		struct {
++			void *si_call_addr;
++			int si_syscall;
++			unsigned si_arch;
++		} __sigsys;
++	} __si_fields;
++} siginfo_t;
++#define si_pid     __si_fields.__si_common.__first.__piduid.si_pid
++#define si_uid     __si_fields.__si_common.__first.__piduid.si_uid
++#define si_status  __si_fields.__si_common.__second.__sigchld.si_status
++#define si_utime   __si_fields.__si_common.__second.__sigchld.si_utime
++#define si_stime   __si_fields.__si_common.__second.__sigchld.si_stime
++#define si_value   __si_fields.__si_common.__second.si_value
++#define si_addr    __si_fields.__sigfault.si_addr
++#define si_addr_lsb __si_fields.__sigfault.si_addr_lsb
++#define si_lower   __si_fields.__sigfault.__first.__addr_bnd.si_lower
++#define si_upper   __si_fields.__sigfault.__first.__addr_bnd.si_upper
++#define si_pkey    __si_fields.__sigfault.__first.si_pkey
++#define si_band    __si_fields.__sigpoll.si_band
++#define si_fd      __si_fields.__sigpoll.si_fd
++#define si_timerid __si_fields.__si_common.__first.__timer.si_timerid
++#define si_overrun __si_fields.__si_common.__first.__timer.si_overrun
++#define si_ptr     si_value.sival_ptr
++#define si_int     si_value.sival_int
++#define si_call_addr __si_fields.__sigsys.si_call_addr
++#define si_syscall __si_fields.__sigsys.si_syscall
++#define si_arch    __si_fields.__sigsys.si_arch
++
++/* Required for sys_sigaction sysdep. */
++#define SA_NOCLDSTOP 1
++#define SA_NOCLDWAIT 2
++#define SA_SIGINFO 4
++#define SA_ONSTACK 0x08000000
++#define SA_RESTART 0x10000000
++#define SA_NODEFER 0x40000000
++#define SA_RESETHAND 0x80000000
++#define SA_RESTORER 0x04000000
++
++/* SA_NOMASK is an alias for SA_NODEFER */
++/* SA_ONESHOT is an alias for SA_RESETHAND */
++#define SA_NOMASK SA_NODEFER
++#define SA_ONESHOT SA_RESETHAND
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Argument for signal() */
++typedef void (*__sighandler) (int);
++
++#define SIG_ERR ((__sighandler)(void *)(-1))
++#define SIG_DFL ((__sighandler)(void *)(0))
++#define SIG_IGN ((__sighandler)(void *)(1))
++
++#define SIGABRT 6
++#define SIGFPE 8
++#define SIGILL 4
++#define SIGINT 2
++#define SIGSEGV 11
++#define SIGTERM 15
++#define SIGPROF 27
++#define SIGIO 29
++#define SIGPWR 30
++#define SIGRTMIN 35
++#define SIGRTMAX 64
++
++/* constants for sigprocmask() */
++#define SIG_BLOCK 0
++#define SIG_UNBLOCK 1
++#define SIG_SETMASK 2
++
++#define SIGHUP    1
++#define SIGQUIT   3
++#define SIGTRAP   5
++#define SIGIOT    SIGABRT
++#define SIGBUS    7
++#define SIGKILL   9
++#define SIGUSR1   10
++#define SIGUSR2   12
++#define SIGPIPE   13
++#define SIGALRM   14
++#define SIGSTKFLT 16
++#define SIGCHLD   17
++#define SIGCONT   18
++#define SIGSTOP   19
++#define SIGTSTP   20
++#define SIGTTIN   21
++#define SIGTTOU   22
++#define SIGURG    23
++#define SIGXCPU   24
++#define SIGXFSZ   25
++#define SIGVTALRM 26
++#define SIGWINCH  28
++#define SIGPOLL   29
++#define SIGSYS    31
++#define SIGUNUSED SIGSYS
++#define SIGCANCEL 32
++#define SIGTIMER  33
++
++#if __MLIBC_XOPEN
++#define MINSIGSTKSZ 2048
++#define SIGSTKSZ 8192
++#define SS_ONSTACK 1
++#define SS_DISABLE 2
++#endif
++
++typedef struct __stack {
++	void *ss_sp;
++	int ss_flags;
++	size_t ss_size;
++} stack_t;
++
++/* constants for sigev_notify of struct sigevent */
++#define SIGEV_SIGNAL 0
++#define SIGEV_NONE 1
++#define SIGEV_THREAD 2
++#define SIGEV_THREAD_ID 4
++
++#define SEGV_MAPERR 1
++#define SEGV_ACCERR 2
++
++#define BUS_ADRALN 1
++#define BUS_ADRERR 2
++#define BUS_OBJERR 3
++#define BUS_MCEERR_AR 4
++#define BUS_MCEERR_AO 5
++
++#define ILL_ILLOPC 1
++#define ILL_ILLOPN 2
++#define ILL_ILLADR 3
++#define ILL_ILLTRP 4
++#define ILL_PRVOPC 5
++#define ILL_PRVREG 6
++#define ILL_COPROC 7
++#define ILL_BADSTK 8
++#define ILL_BADIADDR 9
++
++#define _NSIG 65
++#if defined(_DEFAULT_SOURCE)
++#define NSIG _NSIG
++#endif
++
++#define SI_ASYNCNL (-60)
++#define SI_TKILL (-6)
++#define SI_SIGIO (-5)
++#define SI_ASYNCIO (-4)
++#define SI_MESGQ (-3)
++#define SI_TIMER (-2)
++#define SI_QUEUE (-1)
++#define SI_USER 0
++#define SI_KERNEL 128
++
++#include <bits/threads.h>
++
++struct sigaction {
++	union {
++		void (*sa_handler)(int);
++		void (*sa_sigaction)(int, siginfo_t *, void *);
++	} __sa_handler;
++	unsigned long sa_flags;
++	void (*sa_restorer)(void);
++	sigset_t sa_mask;
++};
++
++#define sa_handler __sa_handler.sa_handler
++#define sa_sigaction __sa_handler.sa_sigaction
++
++/* Taken from the linux kernel headers */
++
++#if defined(__x86_64__)
++
++#ifdef _DEFAULT_SOURCE
++#	define __pollution(n) n
++#else
++#	define __pollution(n) __ ## n
++#endif
++
++#if defined(_GNU_SOURCE)
++#define REG_R8 0
++#define REG_R9 1
++#define REG_R10 2
++#define REG_R11 3
++#define REG_R12 4
++#define REG_R13 5
++#define REG_R14 6
++#define REG_R15 7
++#define REG_RDI 8
++#define REG_RSI 9
++#define REG_RBP 10
++#define REG_RBX 11
++#define REG_RDX 12
++#define REG_RAX 13
++#define REG_RCX 14
++#define REG_RSP 15
++#define REG_RIP 16
++#define REG_EFL 17
++#define REG_CSGSFS 18
++#define REG_ERR 19
++#define REG_TRAPNO 20
++#define REG_OLDMASK 21
++#define REG_CR2 22
++#endif
++
++#define __NGREG 23
++#if defined(_DEFAULT_SOURCE)
++#define NGREG __NREG
++#endif
++
++struct _fpxreg {
++	unsigned short __pollution(significand)[4];
++	unsigned short __pollution(exponent);
++	unsigned short __padding[3];
++};
++
++struct _xmmreg {
++	__mlibc_uint32 __pollution(element)[4];
++};
++
++struct _fpstate {
++	__mlibc_uint16 __pollution(cwd);
++	__mlibc_uint16 __pollution(swd);
++	__mlibc_uint16 __pollution(ftw);
++	__mlibc_uint16 __pollution(fop);
++	__mlibc_uint64 __pollution(rip);
++	__mlibc_uint64 __pollution(rdp);
++	__mlibc_uint32 __pollution(mxcsr);
++	__mlibc_uint32 __pollution(mxcr_mask);
++	struct _fpxreg _st[8];
++	struct _xmmreg _xmm[16];
++	__mlibc_uint32 __padding[24];
++};
++
++#if defined(_DEFAULT_SOURCE)
++struct sigcontext {
++	unsigned long r8, r9, r10, r11, r12, r13, r14, r15;
++	unsigned long rdi, rsi, rbp, rbx, rdx, rax, rcx, rsp, rip, eflags;
++	unsigned short cs, gs, fs, ss;
++	unsigned long err, trapno, oldmask, cr2;
++	struct _fpstate *fpstate;
++	unsigned long __reserved1[8];
++};
++#endif
++
++typedef struct {
++	unsigned long __pollution(gregs)[__NGREG];
++	struct _fpstate *__pollution(fpregs);
++	unsigned long __reserved1[8];
++} mcontext_t;
++
++typedef struct __ucontext {
++	unsigned long __pollution(uc_flags);
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	mcontext_t uc_mcontext;
++	sigset_t uc_sigmask;
++	struct _fpstate __fpregs_mem;
++	unsigned long __ssp[4];
++} ucontext_t;
++
++#elif defined(__i386__)
++
++#define REG_GS 0
++#define REG_FS 1
++#define REG_ES 2
++#define REG_DS 3
++#define REG_EDI 4
++#define REG_ESI 5
++#define REG_EBP 6
++#define REG_ESP 7
++#define REG_EBX 8
++#define REG_EDX 9
++#define REG_ECX 10
++#define REG_EAX 11
++#define REG_TRAPNO 12
++#define REG_ERR 13
++#define REG_EIP 14
++#define REG_CS 15
++#define REG_EFL 16
++#define REG_UESP 17
++#define REG_SS 18
++#define NGREG 19
++
++struct _fpreg {
++	unsigned short significand[4];
++	unsigned short exponent;
++};
++
++struct _fpxreg {
++	unsigned short significand[4];
++	unsigned short exponent;
++	unsigned short padding[3];
++};
++
++struct _xmmreg {
++	__mlibc_uint32 element[4];
++};
++
++struct _fpstate {
++	__mlibc_uint32 cw;
++	__mlibc_uint32 sw;
++	__mlibc_uint32 tag;
++	__mlibc_uint32 ipoff;
++	__mlibc_uint32 cssel;
++	__mlibc_uint32 dataoff;
++	__mlibc_uint32 datasel;
++	struct _fpreg _st[8];
++	__mlibc_uint16 status;
++	__mlibc_uint16 magic;
++
++	/* FXSR FPU */
++
++	__mlibc_uint32 _fxsr_env[6];
++	__mlibc_uint32 mxscr;
++	__mlibc_uint32 reserved;
++	struct _fpxreg _fxsr_st[8];
++	struct _xmmreg _xmm[8];
++
++	__mlibc_uint32 padding2[56];
++};
++
++#if defined(_DEFAULT_SOURCE)
++struct sigcontext {
++	unsigned short gs, __gsh, fs, __fsh, es, __esh, ds, __dsh;
++	unsigned long edi, esi, ebp, esp, ebx, edx, ecx, eax;
++	unsigned long trapno, err, eip;
++	unsigned short cs, __csh;
++	unsigned long eflags, esp_at_signal;
++	unsigned short ss, __ssh;
++	struct _fpstate *fpstate;
++	unsigned long oldmask, cr2;
++};
++#endif
++
++typedef struct {
++	int gregs[NGREG];
++	struct _fpstate *fpregs;
++	unsigned long oldmask;
++	unsigned long cr2;
++} mcontext_t;
++
++struct _libc_fpstate {
++	__mlibc_uint32 cw;
++	__mlibc_uint32 sw;
++	__mlibc_uint32 tag;
++	__mlibc_uint32 ipoff;
++	__mlibc_uint32 cssel;
++	__mlibc_uint32 dataoff;
++	__mlibc_uint32 datasel;
++	struct _fpreg _st[8];
++	__mlibc_uint32 status;
++};
++
++typedef struct __ucontext {
++	unsigned long uc_flags;
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	mcontext_t uc_mcontext;
++	sigset_t uc_sigmask;
++	struct _libc_fpstate __fpregs_mem;
++	unsigned long __ssp[4];
++} ucontext_t;
++
++#elif defined(__riscv) && __riscv_xlen == 64
++/* Definitions from Linux kernel headers. */
++
++#define NGREG 32
++
++enum {
++  REG_PC = 0,
++#define REG_PC REG_PC
++  REG_RA = 1,
++#define REG_RA REG_RA
++  REG_SP = 2,
++#define REG_SP REG_SP
++  REG_TP = 4,
++#define REG_TP REG_TP
++  REG_S0 = 8,
++#define REG_S0 REG_S0
++  REG_A0 = 10
++#define REG_A0 REG_A0
++};
++
++struct __riscv_f_ext_state {
++	__mlibc_uint32 f[32];
++	__mlibc_uint32 fcsr;
++};
++
++struct __riscv_d_ext_state {
++	__mlibc_uint64 f[32];
++	__mlibc_uint32 fcsr;
++};
++
++struct __riscv_q_ext_state {
++	__mlibc_uint64 f[64] __attribute__((__aligned__(16)));
++	__mlibc_uint32 fcsr;
++	__mlibc_uint32 reserved[3];
++};
++
++union __riscv_fp_state {
++	struct __riscv_f_ext_state f;
++	struct __riscv_d_ext_state d;
++	struct __riscv_q_ext_state q;
++};
++
++typedef unsigned long __riscv_mc_gp_state[NGREG];
++
++typedef struct sigcontext {
++	__riscv_mc_gp_state gregs;
++	union __riscv_fp_state fpregs;
++} mcontext_t;
++
++typedef struct __ucontext {
++	unsigned long uc_flags;
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	union {
++		sigset_t uc_sigmask;
++		__mlibc_uint8 __unused[1024 / 8];
++	} __uc_sigmask_union;
++	mcontext_t uc_mcontext;
++} ucontext_t;
++
++#define uc_sigmask __uc_sigmask_union.uc_sigmask
++
++#elif defined (__aarch64__)
++
++#define NGREG 34
++
++typedef struct sigcontext {
++	__mlibc_uint64 fault_address;
++	__mlibc_uint64 regs[31];
++	__mlibc_uint64 sp;
++	__mlibc_uint64 pc;
++	__mlibc_uint64 pstate;
++	__mlibc_uint8 __reserved[4096]  __attribute__ ((__aligned__ (16)));
++} mcontext_t;
++
++#define FPSIMD_MAGIC 0x46508001
++#define ESR_MAGIC 0x45535201
++#define EXTRA_MAGIC 0x45585401
++#define SVE_MAGIC 0x53564501
++struct _aarch64_ctx {
++	__mlibc_uint32 magic;
++	__mlibc_uint32 size;
++};
++struct fpsimd_context {
++	struct _aarch64_ctx head;
++	__mlibc_uint32 fpsr;
++	__mlibc_uint32 fpcr;
++	__uint128_t vregs[32];
++};
++struct esr_context {
++	struct _aarch64_ctx head;
++	__mlibc_uint64 esr;
++};
++struct extra_context {
++	struct _aarch64_ctx head;
++	__mlibc_uint64 datap;
++	__mlibc_uint32 size;
++	__mlibc_uint32 __reserved[3];
++};
++struct sve_context {
++	struct _aarch64_ctx head;
++	__mlibc_uint16 vl;
++	__mlibc_uint16 __reserved[3];
++};
++#define SVE_VQ_BYTES		16
++#define SVE_VQ_MIN		1
++#define SVE_VQ_MAX		512
++#define SVE_VL_MIN		(SVE_VQ_MIN * SVE_VQ_BYTES)
++#define SVE_VL_MAX		(SVE_VQ_MAX * SVE_VQ_BYTES)
++#define SVE_NUM_ZREGS		32
++#define SVE_NUM_PREGS		16
++#define sve_vl_valid(vl) \
++	((vl) % SVE_VQ_BYTES == 0 && (vl) >= SVE_VL_MIN && (vl) <= SVE_VL_MAX)
++#define sve_vq_from_vl(vl)	((vl) / SVE_VQ_BYTES)
++#define sve_vl_from_vq(vq)	((vq) * SVE_VQ_BYTES)
++#define SVE_SIG_ZREG_SIZE(vq)	((unsigned)(vq) * SVE_VQ_BYTES)
++#define SVE_SIG_PREG_SIZE(vq)	((unsigned)(vq) * (SVE_VQ_BYTES / 8))
++#define SVE_SIG_FFR_SIZE(vq)	SVE_SIG_PREG_SIZE(vq)
++#define SVE_SIG_REGS_OFFSET					\
++	((sizeof(struct sve_context) + (SVE_VQ_BYTES - 1))	\
++		/ SVE_VQ_BYTES * SVE_VQ_BYTES)
++#define SVE_SIG_ZREGS_OFFSET	SVE_SIG_REGS_OFFSET
++#define SVE_SIG_ZREG_OFFSET(vq, n) \
++	(SVE_SIG_ZREGS_OFFSET + SVE_SIG_ZREG_SIZE(vq) * (n))
++#define SVE_SIG_ZREGS_SIZE(vq) \
++	(SVE_SIG_ZREG_OFFSET(vq, SVE_NUM_ZREGS) - SVE_SIG_ZREGS_OFFSET)
++#define SVE_SIG_PREGS_OFFSET(vq) \
++	(SVE_SIG_ZREGS_OFFSET + SVE_SIG_ZREGS_SIZE(vq))
++#define SVE_SIG_PREG_OFFSET(vq, n) \
++	(SVE_SIG_PREGS_OFFSET(vq) + SVE_SIG_PREG_SIZE(vq) * (n))
++#define SVE_SIG_PREGS_SIZE(vq) \
++	(SVE_SIG_PREG_OFFSET(vq, SVE_NUM_PREGS) - SVE_SIG_PREGS_OFFSET(vq))
++#define SVE_SIG_FFR_OFFSET(vq) \
++	(SVE_SIG_PREGS_OFFSET(vq) + SVE_SIG_PREGS_SIZE(vq))
++#define SVE_SIG_REGS_SIZE(vq) \
++	(SVE_SIG_FFR_OFFSET(vq) + SVE_SIG_FFR_SIZE(vq) - SVE_SIG_REGS_OFFSET)
++#define SVE_SIG_CONTEXT_SIZE(vq) (SVE_SIG_REGS_OFFSET + SVE_SIG_REGS_SIZE(vq))
++
++typedef struct __ucontext {
++	unsigned long uc_flags;
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	sigset_t uc_sigmask;
++	mcontext_t uc_mcontext;
++} ucontext_t;
++
++#elif defined (__m68k__)
++
++/* taken from musl */
++
++#if defined(_GNU_SOURCE) || defined(__MLIBC_BUILDING_MLIBC)
++enum { R_D0 = 0 };
++#define R_D0 R_D0
++enum { R_D1 = 1 };
++#define R_D1 R_D1
++enum { R_D2 = 2 };
++#define R_D2 R_D2
++enum { R_D3 = 3 };
++#define R_D3 R_D3
++enum { R_D4 = 4 };
++#define R_D4 R_D4
++enum { R_D5 = 5 };
++#define R_D5 R_D5
++enum { R_D6 = 6 };
++#define R_D6 R_D6
++enum { R_D7 = 7 };
++#define R_D7 R_D7
++enum { R_A0 = 8 };
++#define R_A0 R_A0
++enum { R_A1 = 9 };
++#define R_A1 R_A1
++enum { R_A2 = 10 };
++#define R_A2 R_A2
++enum { R_A3 = 11 };
++#define R_A3 R_A3
++enum { R_A4 = 12 };
++#define R_A4 R_A4
++enum { R_A5 = 13 };
++#define R_A5 R_A5
++enum { R_A6 = 14 };
++#define R_A6 R_A6
++enum { R_A7 = 15 };
++#define R_A7 R_A7
++enum { R_SP = 15 };
++#define R_SP R_SP
++enum { R_PC = 16 };
++#define R_PC R_PC
++enum { R_PS = 17 };
++#define R_PS R_PS
++#endif
++
++#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) || defined(__MLIBC_BUILDING_MLIBC)
++
++struct sigcontext {
++	unsigned long sc_mask, sc_usp, sc_d0, sc_d1, sc_a0, sc_a1;
++	unsigned short sc_sr;
++	unsigned long sc_pc;
++	unsigned short sc_formatvec;
++	unsigned long sc_fpregs[6], sc_fpcntl[3];
++	unsigned char sc_fpstate[216];
++};
++
++typedef int greg_t, gregset_t[18];
++typedef struct {
++	int f_pcr, f_psr, f_fpiaddr, f_fpregs[8][3];
++} fpregset_t;
++
++typedef struct {
++	int version;
++	gregset_t gregs;
++	fpregset_t fpregs;
++} mcontext_t;
++#else
++typedef struct {
++	int __version;
++	int __gregs[18];
++	int __fpregs[27];
++} mcontext_t;
++#endif
++
++struct sigaltstack {
++	void *ss_sp;
++	int ss_flags;
++	size_t ss_size;
++};
++
++typedef struct __ucontext {
++	unsigned long uc_flags;
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	mcontext_t uc_mcontext;
++	long __reserved[80];
++	sigset_t uc_sigmask;
++} ucontext_t;
++
++#elif defined(__loongarch64)
++/* Taken from musl. */
++
++#define NGREG 32
++#define REG_RA 1
++#define REG_SP 3
++#define REG_S0 23
++#define REG_S1 24
++#define REG_A0 4
++#define REG_S2 25
++#define REG_NARGS 8
++
++typedef unsigned long greg_t, gregset_t[32];
++
++struct sigcontext {
++	unsigned long sc_pc;
++	unsigned long sc_regs[32];
++	unsigned sc_flags;
++	__extension__ unsigned long sc_extcontext[0] __attribute__((__aligned__(16)));
++};
++
++typedef struct {
++	unsigned long pc;
++	unsigned long gregs[32];
++	unsigned flags;
++/* this is just plain incompatible with pre-C99; hiding this does not change size or alignment */
++#if defined __STDC_VERSION__ && __STDC_VERSION__ >= 199901L
++	__extension__ unsigned long extcontext[0] __attribute__((__aligned__(16)));
++#endif
++} mcontext_t;
++
++struct sigaltstack {
++	void *ss_sp;
++	int ss_flags;
++	size_t ss_size;
++};
++
++typedef struct __ucontext {
++	unsigned long uc_flags;
++	struct __ucontext *uc_link;
++	stack_t uc_stack;
++	sigset_t uc_sigmask;
++	long __uc_pad;
++	__extension__ mcontext_t uc_mcontext;
++} ucontext_t;
++
++#else
++#error "Missing architecture specific code."
++#endif
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_SIGNAL_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sigset_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sigset_t.h
+new file mode 100644
+index 0000000..c61aca5
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sigset_t.h
+@@ -0,0 +1,8 @@
++#ifndef _ABIBITS_SIGSET_T_H
++#define _ABIBITS_SIGSET_T_H
++
++typedef struct {
++	unsigned long __sig[1024 / (8 * sizeof(long))];
++} sigset_t;
++
++#endif /* _ABIBITS_SIGSET_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sigval.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sigval.h
+new file mode 100644
+index 0000000..123ba77
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sigval.h
+@@ -0,0 +1,17 @@
++#ifndef _ABIBITS_SIGVAL_H
++#define _ABIBITS_SIGVAL_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++union sigval {
++	int sival_int;
++	void *sival_ptr;
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_SIGVAL_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/sockaddr_storage.h mlibc-workdir/sysdeps/svr4/include/abi-bits/sockaddr_storage.h
+new file mode 100644
+index 0000000..d365548
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/sockaddr_storage.h
+@@ -0,0 +1,12 @@
++#ifndef _ABIBITS_SOCKADDR_STORAGE_H
++#define _ABIBITS_SOCKADDR_STORAGE_H
++
++#include <abi-bits/sa_family_t.h>
++
++struct sockaddr_storage {
++	sa_family_t ss_family;
++	char __padding[128 - sizeof(sa_family_t) - sizeof(long)];
++	long __force_alignment;
++};
++
++#endif /* _ABIBITS_SOCKADDR_STORAGE_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/socket.h mlibc-workdir/sysdeps/svr4/include/abi-bits/socket.h
+new file mode 100644
+index 0000000..46d5b80
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/socket.h
+@@ -0,0 +1,362 @@
++#ifndef _ABIBITS_SOCKET_H
++#define _ABIBITS_SOCKET_H
++
++#include <abi-bits/sa_family_t.h>
++#include <abi-bits/socklen_t.h>
++#include <abi-bits/sockaddr_storage.h>
++#include <bits/size_t.h>
++#include <bits/ssize_t.h>
++#include <bits/posix/iovec.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++struct msghdr {
++	void *msg_name;
++	socklen_t msg_namelen;
++	struct iovec *msg_iov;
++#if __INTPTR_WIDTH__ == 64 && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++	int __pad0;
++#endif
++	int msg_iovlen;
++#if __INTPTR_WIDTH__ == 64 && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++	int __pad0;
++#endif
++	void *msg_control;
++#if __INTPTR_WIDTH__ == 64 && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++	int __pad1;
++#endif
++	socklen_t msg_controllen;
++#if __INTPTR_WIDTH__ == 64 && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++	int __pad1;
++#endif
++	int msg_flags;
++};
++
++#if defined(_GNU_SOURCE)
++struct mmsghdr {
++	struct msghdr msg_hdr;
++	unsigned int  msg_len;
++};
++#endif
++
++struct cmsghdr {
++#if __INTPTR_WIDTH__ == 64 && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
++	int __pad;
++#endif
++	socklen_t cmsg_len;
++#if __INTPTR_WIDTH__ == 64 && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++	int __pad;
++#endif
++	int cmsg_level;
++	int cmsg_type;
++};
++
++#ifdef __cplusplus
++}
++#endif
++
++#define SCM_RIGHTS 1
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define SCM_CREDENTIALS 2
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#define SHUT_RD 0
++#define SHUT_WR 1
++#define SHUT_RDWR 2
++
++#ifndef SOCK_STREAM
++#define SOCK_STREAM    1
++#define SOCK_DGRAM     2
++#endif
++
++#define SOCK_RAW       3
++#define SOCK_SEQPACKET 5
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define SOCK_RDM       4
++#define SOCK_DCCP      6
++#define SOCK_PACKET    10
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#ifndef SOCK_CLOEXEC
++#define SOCK_CLOEXEC   02000000
++#define SOCK_NONBLOCK  04000
++#endif
++
++#define AF_UNSPEC       0
++#define AF_UNIX         1
++#define AF_INET         2
++#define AF_INET6        10
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define PF_UNSPEC       0
++#define PF_LOCAL        1
++#define PF_UNIX         PF_LOCAL
++#define PF_FILE         PF_LOCAL
++#define PF_INET         2
++#define PF_AX25         3
++#define PF_IPX          4
++#define PF_APPLETALK    5
++#define PF_NETROM       6
++#define PF_BRIDGE       7
++#define PF_ATMPVC       8
++#define PF_X25          9
++#define PF_INET6        10
++#define PF_ROSE         11
++#define PF_DECnet       12
++#define PF_NETBEUI      13
++#define PF_SECURITY     14
++#define PF_KEY          15
++#define PF_NETLINK      16
++#define PF_ROUTE        PF_NETLINK
++#define PF_PACKET       17
++#define PF_ASH          18
++#define PF_ECONET       19
++#define PF_ATMSVC       20
++#define PF_RDS          21
++#define PF_SNA          22
++#define PF_IRDA         23
++#define PF_PPPOX        24
++#define PF_WANPIPE      25
++#define PF_LLC          26
++#define PF_IB           27
++#define PF_MPLS         28
++#define PF_CAN          29
++#define PF_TIPC         30
++#define PF_BLUETOOTH    31
++#define PF_IUCV         32
++#define PF_RXRPC        33
++#define PF_ISDN         34
++#define PF_PHONET       35
++#define PF_IEEE802154   36
++#define PF_CAIF         37
++#define PF_ALG          38
++#define PF_NFC          39
++#define PF_VSOCK        40
++#define PF_KCM          41
++#define PF_QIPCRTR      42
++#define PF_SMC          43
++#define PF_XDP          44
++#define PF_MAX          45
++
++#define AF_LOCAL        PF_LOCAL
++#define AF_FILE         AF_LOCAL
++#define AF_AX25         PF_AX25
++#define AF_IPX          PF_IPX
++#define AF_APPLETALK    PF_APPLETALK
++#define AF_NETROM       PF_NETROM
++#define AF_BRIDGE       PF_BRIDGE
++#define AF_ATMPVC       PF_ATMPVC
++#define AF_X25          PF_X25
++#define AF_ROSE         PF_ROSE
++#define AF_DECnet       PF_DECnet
++#define AF_NETBEUI      PF_NETBEUI
++#define AF_SECURITY     PF_SECURITY
++#define AF_KEY          PF_KEY
++#define AF_NETLINK      PF_NETLINK
++#define AF_ROUTE        PF_ROUTE
++#define AF_PACKET       PF_PACKET
++#define AF_ASH          PF_ASH
++#define AF_ECONET       PF_ECONET
++#define AF_ATMSVC       PF_ATMSVC
++#define AF_RDS          PF_RDS
++#define AF_SNA          PF_SNA
++#define AF_IRDA         PF_IRDA
++#define AF_PPPOX        PF_PPPOX
++#define AF_WANPIPE      PF_WANPIPE
++#define AF_LLC          PF_LLC
++#define AF_IB           PF_IB
++#define AF_MPLS         PF_MPLS
++#define AF_CAN          PF_CAN
++#define AF_TIPC         PF_TIPC
++#define AF_BLUETOOTH    PF_BLUETOOTH
++#define AF_IUCV         PF_IUCV
++#define AF_RXRPC        PF_RXRPC
++#define AF_ISDN         PF_ISDN
++#define AF_PHONET       PF_PHONET
++#define AF_IEEE802154   PF_IEEE802154
++#define AF_CAIF         PF_CAIF
++#define AF_ALG          PF_ALG
++#define AF_NFC          PF_NFC
++#define AF_VSOCK        PF_VSOCK
++#define AF_KCM          PF_KCM
++#define AF_QIPCRTR      PF_QIPCRTR
++#define AF_SMC          PF_SMC
++#define AF_XDP          PF_XDP
++#define AF_MAX          PF_MAX
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#define SO_DEBUG        1
++#define SO_REUSEADDR    2
++#define SO_TYPE         3
++#define SO_ERROR        4
++#define SO_DONTROUTE    5
++#define SO_BROADCAST    6
++#define SO_SNDBUF       7
++#define SO_RCVBUF       8
++#define SO_KEEPALIVE    9
++#define SO_OOBINLINE    10
++#define SO_LINGER       13
++#define SO_RCVLOWAT     18
++#define SO_SNDLOWAT     19
++#define SO_ACCEPTCONN   30
++#define SO_PROTOCOL     38
++#define SO_DOMAIN       39
++
++#ifndef SO_RCVTIMEO
++#if __LONG_MAX__ == 0x7fffffff
++#define SO_RCVTIMEO     66
++#else
++#define SO_RCVTIMEO     20
++#endif
++#endif
++
++#ifndef SO_SNDTIMEO
++#if __LONG_MAX__ == 0x7fffffff
++#define SO_SNDTIMEO     67
++#else
++#define SO_SNDTIMEO     21
++#endif
++#endif
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#ifndef SO_RCVTIMEO_OLD
++#define SO_RCVTIMEO_OLD 20
++#endif
++
++#ifndef SO_SNDTIMEO_OLD
++#define SO_SNDTIMEO_OLD 21
++#endif
++
++#define SO_NO_CHECK     11
++#define SO_PRIORITY     12
++#define SO_BSDCOMPAT    14
++#define SO_REUSEPORT    15
++#define SO_PASSCRED     16
++#define SO_PEERCRED     17
++#define SO_PEERSEC      31
++#define SO_SNDBUFFORCE  32
++#define SO_RCVBUFFORCE  33
++
++#ifndef SO_TIMESTAMP
++#if __LONG_MAX__ == 0x7fffffff
++#define SO_TIMESTAMP    63
++#define SO_TIMESTAMPNS  64
++#define SO_TIMESTAMPING 65
++#else
++#define SO_TIMESTAMP    29
++#define SO_TIMESTAMPNS  35
++#define SO_TIMESTAMPING 37
++#endif
++#endif
++
++#define SO_SECURITY_AUTHENTICATION              22
++#define SO_SECURITY_ENCRYPTION_TRANSPORT        23
++#define SO_SECURITY_ENCRYPTION_NETWORK          24
++
++#define SO_BINDTODEVICE 25
++
++#define SO_ATTACH_FILTER        26
++#define SO_DETACH_FILTER        27
++#define SO_GET_FILTER           SO_ATTACH_FILTER
++
++#define SO_PEERNAME             28
++#define SCM_TIMESTAMP           SO_TIMESTAMP
++#define SO_PASSSEC              34
++#define SCM_TIMESTAMPNS         SO_TIMESTAMPNS
++#define SO_MARK                 36
++#define SCM_TIMESTAMPING        SO_TIMESTAMPING
++#define SO_RXQ_OVFL             40
++#define SO_WIFI_STATUS          41
++#define SCM_WIFI_STATUS         SO_WIFI_STATUS
++#define SO_PEEK_OFF             42
++#define SO_NOFCS                43
++#define SO_LOCK_FILTER          44
++#define SO_SELECT_ERR_QUEUE     45
++#define SO_BUSY_POLL            46
++#define SO_MAX_PACING_RATE      47
++#define SO_BPF_EXTENSIONS       48
++#define SO_INCOMING_CPU         49
++#define SO_ATTACH_BPF           50
++#define SO_DETACH_BPF           SO_DETACH_FILTER
++#define SO_ATTACH_REUSEPORT_CBPF 51
++#define SO_ATTACH_REUSEPORT_EBPF 52
++#define SO_CNX_ADVICE           53
++#define SCM_TIMESTAMPING_OPT_STATS 54
++#define SO_MEMINFO              55
++#define SO_INCOMING_NAPI_ID     56
++#define SO_COOKIE               57
++#define SCM_TIMESTAMPING_PKTINFO 58
++#define SO_PEERGROUPS           59
++#define SO_ZEROCOPY             60
++#define SO_TXTIME               61
++#define SCM_TXTIME              SO_TXTIME
++#define SO_BINDTOIFINDEX        62
++#define SO_DETACH_REUSEPORT_BPF 68
++#define SO_PASSRIGHTS		 	83
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#define SOL_SOCKET      1
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define SOL_IP          0
++#define SOL_IPV6        41
++#define SOL_ICMPV6      58
++
++#define SOL_RAW         255
++#define SOL_DECNET      261
++#define SOL_X25         262
++#define SOL_PACKET      263
++#define SOL_ATM         264
++#define SOL_AAL         265
++#define SOL_IRDA        266
++#define SOL_NETBEUI     267
++#define SOL_LLC         268
++#define SOL_DCCP        269
++#define SOL_NETLINK     270
++#define SOL_TIPC        271
++#define SOL_RXRPC       272
++#define SOL_PPPOL2TP    273
++#define SOL_BLUETOOTH   274
++#define SOL_PNPIPE      275
++#define SOL_RDS         276
++#define SOL_IUCV        277
++#define SOL_CAIF        278
++#define SOL_ALG         279
++#define SOL_NFC         280
++#define SOL_KCM         281
++#define SOL_TLS         282
++#define SOL_XDP         283
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#define SOMAXCONN       128
++
++#define MSG_OOB       0x0001
++#define MSG_PEEK      0x0002
++#define MSG_DONTROUTE 0x0004
++#define MSG_CTRUNC    0x0008
++#define MSG_TRUNC     0x0020
++#define MSG_EOR       0x0080
++#define MSG_WAITALL   0x0100
++#define MSG_NOSIGNAL  0x4000
++#define MSG_CMSG_CLOEXEC 0x40000000
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN
++#define MSG_PROXY     0x0010
++#define MSG_DONTWAIT  0x0040
++#define MSG_FIN       0x0200
++#define MSG_SYN       0x0400
++#define MSG_CONFIRM   0x0800
++#define MSG_RST       0x1000
++#define MSG_ERRQUEUE  0x2000
++#define MSG_MORE      0x8000
++#define MSG_WAITFORONE 0x10000
++#define MSG_BATCH     0x40000
++#define MSG_ZEROCOPY  0x4000000
++#define MSG_FASTOPEN  0x20000000
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_XOPEN */
++
++#endif
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/socklen_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/socklen_t.h
+new file mode 100644
+index 0000000..190e5f9
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/socklen_t.h
+@@ -0,0 +1,6 @@
++#ifndef _ABIBITS_SOCKLEN_T_H
++#define _ABIBITS_SOCKLEN_T_H
++
++typedef unsigned socklen_t;
++
++#endif /* _ABIBITS_SOCKLEN_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/stat.h mlibc-workdir/sysdeps/svr4/include/abi-bits/stat.h
+new file mode 100644
+index 0000000..464e059
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/stat.h
+@@ -0,0 +1,142 @@
++#ifndef _ABIBITS_STAT_H
++#define _ABIBITS_STAT_H
++
++#include <abi-bits/uid_t.h>
++#include <abi-bits/gid_t.h>
++#include <bits/off_t.h>
++#include <abi-bits/mode_t.h>
++#include <abi-bits/dev_t.h>
++#include <abi-bits/ino_t.h>
++#include <abi-bits/blksize_t.h>
++#include <abi-bits/blkcnt_t.h>
++#include <abi-bits/nlink_t.h>
++#include <bits/ansi/time_t.h>
++#include <bits/ansi/timespec.h>
++
++#define S_IFMT 0x0F000
++#define S_IFBLK 0x06000
++#define S_IFCHR 0x02000
++#define S_IFIFO 0x01000
++#define S_IFREG 0x08000
++#define S_IFDIR 0x04000
++#define S_IFLNK 0x0A000
++#define S_IFSOCK 0x0C000
++
++#define S_IRWXU 0700
++#define S_IRUSR 0400
++#define S_IWUSR 0200
++#define S_IXUSR 0100
++#define S_IRWXG 070
++#define S_IRGRP 040
++#define S_IWGRP 020
++#define S_IXGRP 010
++#define S_IRWXO 07
++#define S_IROTH 04
++#define S_IWOTH 02
++#define S_IXOTH 01
++#define S_ISUID 04000
++#define S_ISGID 02000
++#define S_ISVTX 01000
++
++#define S_IREAD  S_IRUSR
++#define S_IWRITE S_IWUSR
++#define S_IEXEC  S_IXUSR
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++#if defined(__x86_64__)
++
++struct stat {
++	dev_t st_dev;
++	ino_t st_ino;
++	nlink_t st_nlink;
++	mode_t st_mode;
++	uid_t st_uid;
++	gid_t st_gid;
++	unsigned int __pad0;
++	dev_t st_rdev;
++	off_t st_size;
++	blksize_t st_blksize;
++	blkcnt_t st_blocks;
++	struct timespec st_atim;
++	struct timespec st_mtim;
++	struct timespec st_ctim;
++	long __unused[3];
++};
++
++#elif (defined(__riscv) && __riscv_xlen == 64) || defined (__aarch64__) || defined(__loongarch64)
++
++struct stat {
++	dev_t st_dev;
++	ino_t st_ino;
++	mode_t st_mode;
++	nlink_t st_nlink;
++	uid_t st_uid;
++	gid_t st_gid;
++	dev_t st_rdev;
++	dev_t __pad1;
++	off_t st_size;
++	blksize_t st_blksize;
++	int __pad2;
++	blkcnt_t st_blocks;
++	struct timespec st_atim;
++	struct timespec st_mtim;
++	struct timespec st_ctim;
++	int __pad3[2];
++};
++
++#elif defined(__i386__)
++
++struct stat {
++	dev_t st_dev;
++	unsigned short int __st_dev_padding;
++	long __st_ino_truncated;
++	mode_t st_mode;
++	nlink_t st_nlink;
++	uid_t st_uid;
++	gid_t st_gid;
++	dev_t st_rdev;
++	unsigned short int __st_rdev_padding;
++	off64_t st_size;
++	blksize_t st_blksize;
++	blkcnt_t st_blocks;
++	struct timespec st_atim;
++	struct timespec st_mtim;
++	struct timespec st_ctim;
++	ino64_t st_ino;
++};
++
++#elif defined (__m68k__)
++
++struct stat {
++	dev_t st_dev;
++	unsigned char __st_dev_padding[2];
++	unsigned long __st_ino;
++	mode_t st_mode;
++	nlink_t st_nlink;
++	uid_t st_uid;
++	gid_t st_gid;
++	dev_t st_rdev;
++	unsigned char __st_rdev_padding;
++	long long st_size; /* TODO: off64_t? */
++	blksize_t st_blksize;
++	blkcnt_t st_blocks;
++	struct timespec st_atim;
++	struct timespec st_mtim;
++	struct timespec st_ctim;
++	ino_t st_ino;
++};
++
++#endif
++
++#if defined(_DEFAULT_SOURCE) || defined(_LARGEFILE64_SOURCE)
++#define stat64 stat
++#endif
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _ABIBITS_STAT_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/statvfs.h mlibc-workdir/sysdeps/svr4/include/abi-bits/statvfs.h
+new file mode 100644
+index 0000000..dac0aea
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/statvfs.h
+@@ -0,0 +1,64 @@
++#ifndef _ABIBITS_STATVFS_H
++#define _ABIBITS_STATVFS_H
++
++#include <mlibc-config.h>
++
++#include <abi-bits/fsblkcnt_t.h>
++#include <abi-bits/fsfilcnt_t.h>
++
++#define ST_RDONLY 1
++#define ST_NOSUID 2
++#define ST_NODEV 4
++#define ST_NOEXEC 8
++#define ST_SYNCHRONOUS 16
++#define ST_MANDLOCK 64
++#define ST_WRITE 128
++#define ST_APPEND 256
++#define ST_IMMUTABLE 512
++#define ST_NOATIME 1024
++#define ST_NODIRATIME 2048
++
++/* On Linux, this struct is not directly used by the kernel. */
++
++/* WARNING: keep `statvfs` and `statvfs64` in sync or bad things will happen! */
++struct statvfs {
++	unsigned long f_bsize;
++	unsigned long f_frsize;
++	fsblkcnt_t f_blocks;
++	fsblkcnt_t f_bfree;
++	fsblkcnt_t f_bavail;
++	fsfilcnt_t f_files;
++	fsfilcnt_t f_ffree;
++	fsfilcnt_t f_favail;
++	unsigned long f_fsid;
++#if __INTPTR_WIDTH__ == 32
++	int __f_unused;
++#endif
++	unsigned long f_flag;
++	unsigned long f_namemax;
++	unsigned int f_spare[6];
++};
++
++#if __MLIBC_LINUX_OPTION && defined(_LARGEFILE64_SOURCE)
++/* WARNING: keep `statvfs` and `statvfs64` in sync or bad things will happen! */
++struct statvfs64 {
++	unsigned long f_bsize;
++	unsigned long f_frsize;
++	fsblkcnt_t f_blocks;
++	fsblkcnt_t f_bfree;
++	fsblkcnt_t f_bavail;
++	fsfilcnt_t f_files;
++	fsfilcnt_t f_ffree;
++	fsfilcnt_t f_favail;
++	unsigned long f_fsid;
++#if __INTPTR_WIDTH__ == 32
++	int __f_unused;
++#endif
++	unsigned long f_flag;
++	unsigned long f_namemax;
++	unsigned int f_spare[6];
++};
++#endif /* __MLIBC_LINUX_OPTION && defined(_LARGEFILE64_SOURCE) */
++
++#endif /* _ABIBITS_STATVFS_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/suseconds_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/suseconds_t.h
+new file mode 100644
+index 0000000..1de1a7c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/suseconds_t.h
+@@ -0,0 +1,8 @@
++#ifndef _ABIBITS_SUSECONDS_T_H
++#define _ABIBITS_SUSECONDS_T_H
++
++#include <bits/types.h>
++
++typedef long suseconds_t;
++
++#endif /* _ABIBITS_SUSECONDS_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/termios.h mlibc-workdir/sysdeps/svr4/include/abi-bits/termios.h
+new file mode 100644
+index 0000000..f0a5d3a
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/termios.h
+@@ -0,0 +1,145 @@
++#ifndef _ABIBITS_TERMIOS_H
++#define _ABIBITS_TERMIOS_H
++
++typedef unsigned char cc_t;
++typedef unsigned int speed_t;
++typedef unsigned int tcflag_t;
++
++/* indices for the c_cc array in struct termios */
++#define NCCS     32
++#define VINTR    0
++#define VQUIT    1
++#define VERASE   2
++#define VKILL    3
++#define VEOF     4
++#define VTIME    5
++#define VMIN     6
++#define VSWTC    7
++#define VSTART   8
++#define VSTOP    9
++#define VSUSP    10
++#define VEOL     11
++#define VREPRINT 12
++#define VDISCARD 13
++#define VWERASE  14
++#define VLNEXT   15
++#define VEOL2    16
++
++/* bitwise flags for c_iflag in struct termios */
++#define IGNBRK 0000001
++#define BRKINT 0000002
++#define IGNPAR 0000004
++#define PARMRK 0000010
++#define INPCK 0000020
++#define ISTRIP 0000040
++#define INLCR 0000100
++#define IGNCR 0000200
++#define ICRNL 0000400
++#define IUCLC 0001000
++#define IXON 0002000
++#define IXANY 0004000
++#define IXOFF 0010000
++#define IMAXBEL 0020000
++#define IUTF8 0040000
++
++/* bitwise flags for c_oflag in struct termios */
++#define OPOST 0000001
++#define OLCUC 0000002
++#define ONLCR 0000004
++#define OCRNL 0000010
++#define ONOCR 0000020
++#define ONLRET 0000040
++#define OFILL 0000100
++#define OFDEL 0000200
++
++#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE) || defined(_XOPEN_SOURCE)
++
++#define NLDLY 0000400
++#define NL0 0000000
++#define NL1 0000400
++
++#define CRDLY 0003000
++#define CR0 0000000
++#define CR1 0001000
++#define CR2 0002000
++#define CR3 0003000
++
++#define TABDLY 0014000
++#define TAB0 0000000
++#define TAB1 0004000
++#define TAB2 0010000
++#define TAB3 0014000
++
++#define BSDLY 0020000
++#define BS0 0000000
++#define BS1 0020000
++
++#define FFDLY 0100000
++#define FF0 0000000
++#define FF1 0100000
++
++#endif
++
++#define VTDLY 0040000
++#define VT0 0000000
++#define VT1 0040000
++
++/* bitwise constants for c_cflag in struct termios */
++#define CSIZE 0000060
++#define CS5 0000000
++#define CS6 0000020
++#define CS7 0000040
++#define CS8 0000060
++
++#define CSTOPB 0000100
++#define CREAD 0000200
++#define PARENB 0000400
++#define PARODD 0001000
++#define HUPCL 0002000
++#define CLOCAL 0004000
++
++/* bitwise constants for c_lflag in struct termios */
++#define ISIG 0000001
++#define ICANON 0000002
++#define ECHO 0000010
++#define ECHOE 0000020
++#define ECHOK 0000040
++#define ECHONL 0000100
++#define NOFLSH 0000200
++#define TOSTOP 0000400
++#define IEXTEN 0100000
++
++#if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
++
++#define EXTA    0000016
++#define EXTB    0000017
++#define CBAUD   0010017
++#define CBAUDEX 0010000
++#define CIBAUD  002003600000
++#define CMSPAR  010000000000
++#define CRTSCTS 020000000000
++
++#define XCASE   0000004
++#define ECHOCTL 0001000
++#define ECHOPRT 0002000
++#define ECHOKE  0004000
++#define FLUSHO  0010000
++#define PENDIN  0040000
++#define EXTPROC 0200000
++
++#define XTABS 0014000
++
++#endif
++
++struct termios {
++	tcflag_t c_iflag;
++	tcflag_t c_oflag;
++	tcflag_t c_cflag;
++	tcflag_t c_lflag;
++	cc_t c_line;
++	cc_t c_cc[NCCS];
++	speed_t c_ibaud;
++	speed_t c_obaud;
++};
++
++#endif
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/time.h mlibc-workdir/sysdeps/svr4/include/abi-bits/time.h
+new file mode 100644
+index 0000000..47a6128
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/time.h
+@@ -0,0 +1,15 @@
++#ifndef _ABIBITS_TIME_H
++#define _ABIBITS_TIME_H
++
++#include <bits/timeval.h>
++
++struct itimerval {
++	struct timeval it_interval;	/* Interval for periodic timer */
++	struct timeval it_value;	/* Time until next expiration */
++};
++
++#define ITIMER_REAL	0
++#define ITIMER_VIRTUAL	1
++#define ITIMER_PROF	2
++
++#endif /* _ABIBITS_TIME_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/uid_t.h mlibc-workdir/sysdeps/svr4/include/abi-bits/uid_t.h
+new file mode 100644
+index 0000000..976540b
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/uid_t.h
+@@ -0,0 +1,8 @@
++
++#ifndef _ABIBITS_UID_T_H
++#define _ABIBITS_UID_T_H
++
++typedef unsigned int uid_t;
++
++#endif /* _ABIBITS_UID_T_H */
++
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/utmp-defines.h mlibc-workdir/sysdeps/svr4/include/abi-bits/utmp-defines.h
+new file mode 100644
+index 0000000..cfc95e1
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/utmp-defines.h
+@@ -0,0 +1,25 @@
++#ifndef _ABIBITS_UTMP_DEFINES_H
++#define _ABIBITS_UTMP_DEFINES_H
++
++#include <mlibc-config.h>
++
++#define EMPTY 0
++#define RUN_LVL 1
++#define BOOT_TIME 2
++#define NEW_TIME 3
++#define OLD_TIME 4
++#define INIT_PROCESS 5
++#define LOGIN_PROCESS 6
++#define USER_PROCESS 7
++#define DEAD_PROCESS 8
++
++#ifdef _GNU_SOURCE
++#define ACCOUNTING 9
++#endif
++
++#if __MLIBC_LINUX_OPTION
++#define UTMP_FILE "/var/run/utmp"
++#define WTMP_FILE "/var/log/wtmp"
++#endif /* __MLIBC_LINUX_OPTION */
++
++#endif /* _ABIBITS_UTMP_DEFINES_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/utmpx.h mlibc-workdir/sysdeps/svr4/include/abi-bits/utmpx.h
+new file mode 100644
+index 0000000..1323814
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/utmpx.h
+@@ -0,0 +1,36 @@
++#ifndef _ABIBITS_UTMPX_H
++#define _ABIBITS_UTMPX_H
++
++#include <abi-bits/pid_t.h>
++#include <bits/timeval.h>
++
++#define __UT_HOSTSIZE 256
++#define __UT_NAMESIZE 32
++#define __UT_LINESIZE 32
++
++/* Struct definition taken from musl */
++struct utmpx {
++	short ut_type;
++	short __ut_pad1;
++	pid_t ut_pid;
++	char ut_line[__UT_LINESIZE];
++	char ut_id[4];
++	char ut_user[__UT_NAMESIZE];
++	char ut_host[__UT_HOSTSIZE];
++	struct {
++		short __e_termination;
++		short __e_exit;
++	} ut_exit;
++	int ut_session, __ut_pad2;
++	struct timeval ut_tv;
++	unsigned ut_addr_v6[4];
++	char __unused[20];
++};
++
++#define e_exit __e_exit
++#define e_termination __e_termination
++
++#define UTMPX_FILE "/var/run/utmp"
++#define WTMPX_FILE "/var/log/wtmp"
++
++#endif /* _ABIBITS_UTMPX_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/utsname.h mlibc-workdir/sysdeps/svr4/include/abi-bits/utsname.h
+new file mode 100644
+index 0000000..7d91ae2
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/utsname.h
+@@ -0,0 +1,17 @@
++#ifndef _ABIBITS_UTSNAME_T_H
++#define _ABIBITS_UTSNAME_T_H
++
++struct utsname {
++	char sysname[65];
++	char nodename[65];
++	char release[65];
++	char version[65];
++	char machine[65];
++#if defined(_GNU_SOURCE)
++	char domainname[65];
++#else
++	char __domainname[65];
++#endif
++};
++
++#endif /* _ABIBITS_UTSNAME_T_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/vm-flags.h mlibc-workdir/sysdeps/svr4/include/abi-bits/vm-flags.h
+new file mode 100644
+index 0000000..231d18f
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/vm-flags.h
+@@ -0,0 +1,85 @@
++#ifndef _ABIBITS_VM_FLAGS_H
++#define _ABIBITS_VM_FLAGS_H
++
++#include <mlibc-config.h>
++
++#define PROT_NONE  0x00
++#define PROT_READ  0x01
++#define PROT_WRITE 0x02
++#define PROT_EXEC  0x04
++
++#define MAP_FAILED ((void *)(-1))
++#define MAP_FILE    0x00
++#define MAP_SHARED    0x01
++#define MAP_PRIVATE   0x02
++#define MAP_FIXED     0x10
++#define MAP_ANON      0x20
++#define MAP_ANONYMOUS 0x20
++
++#if __MLIBC_LINUX_OPTION
++
++#define MAP_GROWSDOWN 0x100
++#define MAP_DENYWRITE 0x800
++#define MAP_EXECUTABLE 0x1000
++#define MAP_LOCKED    0x2000
++#define MAP_NORESERVE 0x4000
++#define MAP_POPULATE  0x8000
++#define MAP_NONBLOCK  0x10000
++#define MAP_STACK     0x20000
++#define MAP_HUGETLB   0x40000
++#define MAP_SYNC      0x80000
++#define MAP_FIXED_NOREPLACE 0x100000
++
++#endif /* __MLIBC_LINUX_OPTION */
++
++#define MS_ASYNC 0x01
++#define MS_INVALIDATE 0x02
++#define MS_SYNC 0x04
++
++#define MCL_CURRENT 0x01
++#define MCL_FUTURE 0x02
++
++#define POSIX_MADV_NORMAL 0
++#define POSIX_MADV_RANDOM 1
++#define POSIX_MADV_SEQUENTIAL 2
++#define POSIX_MADV_WILLNEED 3
++#define POSIX_MADV_DONTNEED 4
++
++#if __MLIBC_LINUX_OPTION
++
++#if defined(_DEFAULT_SOURCE)
++#define MADV_NORMAL 0
++#define MADV_RANDOM 1
++#define MADV_SEQUENTIAL 2
++#define MADV_WILLNEED 3
++#define MADV_DONTNEED 4
++#define MADV_FREE 8
++#define MADV_REMOVE 9
++#define MADV_DONTFORK 10
++#define MADV_DOFORK 11
++#define MADV_MERGEABLE 12
++#define MADV_UNMERGEABLE 13
++#define MADV_HUGEPAGE 14
++#define MADV_NOHUGEPAGE 15
++#define MADV_DONTDUMP 16
++#define MADV_DODUMP 17
++#define MADV_WIPEONFORK 18
++#define MADV_KEEPONFORK 19
++#define MADV_COLD 20
++#define MADV_PAGEOUT 21
++#define MADV_HWPOISON 100
++#define MADV_SOFT_OFFLINE 101
++#endif /* defined(_DEFAULT_SOURCE) */
++
++#if defined(_GNU_SOURCE)
++#define MREMAP_MAYMOVE 1
++#define MREMAP_FIXED 2
++
++#define MFD_CLOEXEC 1U
++#define MFD_ALLOW_SEALING 2U
++#define MFD_HUGETLB 4U
++#endif /* defined(_GNU_SOURCE) */
++
++#endif /* __MLIBC_LINUX_OPTION */
++
++#endif /* _ABIBITS_VM_FLAGS_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/abi-bits/wait.h mlibc-workdir/sysdeps/svr4/include/abi-bits/wait.h
+new file mode 100644
+index 0000000..2e5ace1
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/abi-bits/wait.h
+@@ -0,0 +1,43 @@
++#ifndef _ABIBITS_WAIT_H
++#define _ABIBITS_WAIT_H
++
++#include <mlibc-config.h>
++
++#define WNOHANG 1
++#define WUNTRACED 2
++#define WSTOPPED 2
++#define WEXITED 4
++#define WCONTINUED 8
++#define WNOWAIT 0x01000000
++
++#if __MLIBC_LINUX_OPTION
++
++#define __WALL 0x40000000
++#define __WCLONE 0x80000000
++
++#endif /* __MLIBC_LINUX_OPTION */
++
++#define __WCOREFLAG 0x80
++
++#define WEXITSTATUS(x) (((x) & 0xff00) >> 8)
++#define WTERMSIG(x) ((x) & 0x7f)
++#define WSTOPSIG(x) WEXITSTATUS(x)
++#define WIFEXITED(x) (WTERMSIG(x) == 0)
++#define WIFSIGNALED(x) (((signed char) (((x) & 0x7f) + 1) >> 1) > 0)
++#define WIFSTOPPED(x) (((x) & 0xff) == 0x7f)
++#define WIFCONTINUED(x) ((x) == 0xffff)
++
++#if defined(_DEFAULT_SOURCE)
++#define WCOREFLAG __WCOREFLAG
++#endif
++
++#if defined(_DEFAULT_SOURCE) || __MLIBC_POSIX2024
++#define WCOREDUMP(x) ((x) & __WCOREFLAG)
++#endif /* defined(_DEFAULT_SOURCE) || __MLIBC_POSIX2024 */
++
++/* glibc extension, but also useful for kernels */
++#if defined(_DEFAULT_SOURCE)
++#define W_EXITCODE(ret, sig) (((ret) << 8) | (sig))
++#endif /* defined(_DEFAULT_SOURCE) */
++
++#endif /*_ABIBITS_WAIT_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/bits/syscall.h mlibc-workdir/sysdeps/svr4/include/bits/syscall.h
+new file mode 100644
+index 0000000..680bb8c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/bits/syscall.h
+@@ -0,0 +1,100 @@
++#ifndef _MLIBC_SYSCALL_H
++#define _MLIBC_SYSCALL_H
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef long __sc_word_t;
++
++/* These functions are implemented in arch-syscall.cpp. */
++__sc_word_t __do_syscall0(long);
++__sc_word_t __do_syscall1(long, __sc_word_t);
++__sc_word_t __do_syscall2(long, __sc_word_t, __sc_word_t);
++__sc_word_t __do_syscall3(long, __sc_word_t, __sc_word_t, __sc_word_t);
++__sc_word_t __do_syscall4(long, __sc_word_t, __sc_word_t, __sc_word_t, __sc_word_t);
++__sc_word_t __do_syscall5(long, __sc_word_t, __sc_word_t, __sc_word_t, __sc_word_t,
++		__sc_word_t);
++__sc_word_t __do_syscall6(long, __sc_word_t, __sc_word_t, __sc_word_t, __sc_word_t,
++		__sc_word_t, __sc_word_t);
++__sc_word_t __do_syscall7(long, __sc_word_t, __sc_word_t, __sc_word_t, __sc_word_t,
++		__sc_word_t, __sc_word_t, __sc_word_t);
++long __do_syscall_ret(unsigned long);
++
++#ifdef __cplusplus
++extern "C++" {
++
++/* Defining a syscall as a macro is more problematic in C++, since there's a high chance of
++ * a name collision e.g foo.syscall() or foo::syscall.
++ */
++inline long syscall(long n) {
++	return __do_syscall_ret(__do_syscall0(n));
++}
++template<typename Arg0>
++long syscall(long n, Arg0 a0) {
++	return __do_syscall_ret(__do_syscall1(n, (long)a0));
++}
++template<typename Arg0, typename Arg1>
++long syscall(long n, Arg0 a0, Arg1 a1) {
++	return __do_syscall_ret(__do_syscall2(n, (long)a0, (long)a1));
++}
++template<typename Arg0, typename Arg1, typename Arg2>
++long syscall(long n, Arg0 a0, Arg1 a1, Arg2 a2) {
++	return __do_syscall_ret(__do_syscall3(n, (long)a0, (long)a1, (long)a2));
++}
++template<typename Arg0, typename Arg1, typename Arg2, typename Arg3>
++long syscall(long n, Arg0 a0, Arg1 a1, Arg2 a2, Arg3 a3) {
++	return __do_syscall_ret(__do_syscall4(n, (long)a0, (long)a1, (long)a2, (long)a3));
++}
++template<typename Arg0, typename Arg1, typename Arg2, typename Arg3, typename Arg4>
++long syscall(long n, Arg0 a0, Arg1 a1, Arg2 a2, Arg3 a3, Arg4 a4) {
++	return __do_syscall_ret(__do_syscall5(n, (long)a0, (long)a1, (long)a2, (long)a3, (long)a4));
++}
++template<typename Arg0, typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5>
++long syscall(long n, Arg0 a0, Arg1 a1, Arg2 a2, Arg3 a3, Arg4 a4, Arg5 a5) {
++	return __do_syscall_ret(__do_syscall6(n, (long)a0, (long)a1, (long)a2, (long)a3, (long)a4, (long)a5));
++}
++template<typename Arg0, typename Arg1, typename Arg2, typename Arg3, typename Arg4, typename Arg5, typename Arg6>
++long syscall(long n, Arg0 a0, Arg1 a1, Arg2 a2, Arg3 a3, Arg4 a4, Arg5 a5, Arg6 a6) {
++	return __do_syscall_ret(__do_syscall7(n, (long)a0, (long)a1, (long)a2, (long)a3, (long)a4, (long)a5, (long)a6));
++}
++
++} /* extern C++ */
++#else
++
++/*
++ * Variadic macros are not supported in C89.
++ * glibc implements syscall() as a variadic function, which we've ruled out.
++ * musl uses them without checking the C standard in use. So suppressing
++ * the check here seems reasonable.
++ */
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wvariadic-macros"
++
++/* These syscall macros were copied from musl. */
++#define __scc(x) ((__sc_word_t)(x))
++#define __syscall0(n) __do_syscall0(n)
++#define __syscall1(n,a) __do_syscall1(n,__scc(a))
++#define __syscall2(n,a,b) __do_syscall2(n,__scc(a),__scc(b))
++#define __syscall3(n,a,b,c) __do_syscall3(n,__scc(a),__scc(b),__scc(c))
++#define __syscall4(n,a,b,c,d) __do_syscall4(n,__scc(a),__scc(b),__scc(c),__scc(d))
++#define __syscall5(n,a,b,c,d,e) __do_syscall5(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e))
++#define __syscall6(n,a,b,c,d,e,f) __do_syscall6(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e),__scc(f))
++#define __syscall7(n,a,b,c,d,e,f,g) __do_syscall7(n,__scc(a),__scc(b),__scc(c),__scc(d),__scc(e),__scc(f),__scc(g))
++#define __SYSCALL_NARGS_X(a,b,c,d,e,f,g,h,n,...) n
++#define __SYSCALL_NARGS(...) __SYSCALL_NARGS_X(__VA_ARGS__,7,6,5,4,3,2,1,0,)
++#define __SYSCALL_CONCAT_X(a,b) a##b
++#define __SYSCALL_CONCAT(a,b) __SYSCALL_CONCAT_X(a,b)
++#define __SYSCALL_DISP(b,...) __SYSCALL_CONCAT(b,__SYSCALL_NARGS(__VA_ARGS__))(__VA_ARGS__)
++#define __syscall(...) __SYSCALL_DISP(__syscall,__VA_ARGS__)
++#define syscall(...) __do_syscall_ret(__syscall(__VA_ARGS__))
++
++#pragma GCC diagnostic pop
++
++#endif
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* _MLIBC_SYSCALL_H */
+diff --git mlibc-workdir/sysdeps/svr4/include/sys/syscall.h mlibc-workdir/sysdeps/svr4/include/sys/syscall.h
+new file mode 100644
+index 0000000..06c452e
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/sys/syscall.h
+@@ -0,0 +1,127 @@
++#ifndef _SYS_SYSCALL_H
++#define _SYS_SYSCALL_H
++
++#define SYS_exit 1
++#define SYS_fork 2
++#define SYS_read 3
++#define SYS_write 4
++#define SYS_open 5
++#define SYS_close 6
++#define SYS_wait 7
++#define SYS_creat 8
++#define SYS_link 9
++#define SYS_unlink 10
++#define SYS_exec 11
++#define SYS_chdir 12
++#define SYS_time 13
++#define SYS_mknod 14
++#define SYS_chmod 15
++#define SYS_chown 16
++#define SYS_brk 17
++#define SYS_stat 18
++#define SYS_lseek 19
++#define SYS_getpid 20
++#define SYS_mount 21
++#define SYS_umount 22
++#define SYS_setuid 23
++#define SYS_getuid 24
++#define SYS_stime 25
++#define SYS_ptrace 26
++#define SYS_alarm 27
++#define SYS_fstat 28
++#define SYS_pause 29
++#define SYS_utime 30
++#define SYS_stty 31
++#define SYS_gtty 32
++#define SYS_access 33
++#define SYS_nice 34
++#define SYS_statfs 35
++#define SYS_sync 36
++#define SYS_kill 37
++#define SYS_fstatfs 38
++#define SYS_pgrpsys 39
++#define SYS_xenix 40
++#define SYS_dup 41
++#define SYS_pipe 42
++#define SYS_times 43
++#define SYS_profil 44
++#define SYS_plock 45
++#define SYS_setgid 46
++#define SYS_getgid 47
++#define SYS_signal 48
++#define SYS_msgsys 49
++#define SYS_sys3b 50
++#define SYS_acct 51
++#define SYS_shmsys 52
++#define SYS_semsys 53
++#define SYS_ioctl 54
++#define SYS_uadmin 55
++#define SYS_utssys 57
++#define SYS_fsync 58
++#define SYS_execve 59
++#define SYS_umask 60
++#define SYS_chroot 61
++#define SYS_fcntl 62
++#define SYS_ulimit 63
++#define SYS_rfsys 78
++#define SYS_rmdir 79
++#define SYS_mkdir 80
++#define SYS_getdents 81
++#define SYS_sysfs 84
++#define SYS_getmsg 85
++#define SYS_putmsg 86
++#define SYS_poll 87
++#define SYS_lstat 88
++#define SYS_symlink 89
++#define SYS_readlink 90
++#define SYS_setgroups 91
++#define SYS_getgroups 92
++#define SYS_fchmod 93
++#define SYS_fchown 94
++#define SYS_sigprocmask 95
++#define SYS_sigsuspend 96
++#define SYS_sigaltstack 97
++#define SYS_sigaction 98
++#define SYS_sigpending 99
++#define SYS_context 100
++#define SYS_evsys 101
++#define SYS_evtrapret 102
++#define SYS_statvfs 103
++#define SYS_fstatvfs 104
++#define SYS_nfssys 106
++#define SYS_waitsys 107
++#define SYS_sigsendsys 108
++#define SYS_hrtsys 109
++#define SYS_acancel 110
++#define SYS_async 111
++#define SYS_priocntlsys 112
++#define SYS_pathconf 113
++#define SYS_mincore 114
++#define SYS_mmap 115
++#define SYS_mprotect 116
++#define SYS_munmap 117
++#define SYS_fpathconf 118
++#define SYS_vfork 119
++#define SYS_fchdir 120
++#define SYS_readv 121
++#define SYS_writev 122
++#define SYS_xstat 123
++#define SYS_lxstat 124
++#define SYS_fxstat 125
++#define SYS_xmknod 126
++#define SYS_clocal 127
++#define SYS_setrlimit 128
++#define SYS_getrlimit 129
++#define SYS_lchown 130
++#define SYS_memcntl 131
++#define SYS_getpmsg 132
++#define SYS_putpmsg 133
++#define SYS_rename 134
++#define SYS_uname 135
++#define SYS_setegid 136
++#define SYS_sysconfig 137
++#define SYS_adjtime 138
++#define SYS_systeminfo 139
++#define SYS_seteuid 141
++
++#endif /* _SYS_SYSCALL_H */
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/include/syscall.h mlibc-workdir/sysdeps/svr4/include/syscall.h
+new file mode 100644
+index 0000000..f2043aa
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/include/syscall.h
+@@ -0,0 +1 @@
++#include <sys/syscall.h>
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/meson.build mlibc-workdir/sysdeps/svr4/meson.build
+new file mode 100644
+index 0000000..a38d88e
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/meson.build
+@@ -0,0 +1,134 @@
++sysdep_supported_options = {
++	'posix': true,
++}
++
++normalized_cpu_family = host_machine.cpu_family()
++if normalized_cpu_family.startswith('i') and normalized_cpu_family.endswith('86')
++	normalized_cpu_family = 'x86'
++endif
++
++if normalized_cpu_family != 'x86'
++	error('sysdeps/svr4 currently only scaffolds the i386 SVR4 ABI')
++endif
++
++svr4_include_dirs = [
++	include_directories('include'),
++]
++
++rtld_include_dirs += svr4_include_dirs
++libc_include_dirs += svr4_include_dirs
++
++rtld_sources += files(
++	normalized_cpu_family / 'arch-syscall.S',
++	'generic/sysdeps.cpp',
++)
++
++libc_sources += files(
++	normalized_cpu_family / 'arch-syscall.S',
++	normalized_cpu_family / 'assembly-asserts.cpp',
++	normalized_cpu_family / 'signals.S',
++	'generic/entry.cpp',
++	'generic/sysdeps.cpp',
++)
++
++if get_option('posix_option').allowed()
++	libc_sources += files(
++		normalized_cpu_family / 'cp_syscall.S',
++		normalized_cpu_family / 'thread_entry.S',
++	)
++endif
++
++if not no_headers
++	install_headers(
++		'include/abi-bits/access.h',
++		'include/abi-bits/auxv.h',
++		'include/abi-bits/blkcnt_t.h',
++		'include/abi-bits/blksize_t.h',
++		'include/abi-bits/clockid_t.h',
++		'include/abi-bits/dev_t.h',
++		'include/abi-bits/errno.h',
++		'include/abi-bits/fcntl.h',
++		'include/abi-bits/fd_set.h',
++		'include/abi-bits/fsblkcnt_t.h',
++		'include/abi-bits/fsfilcnt_t.h',
++		'include/abi-bits/gid_t.h',
++		'include/abi-bits/in.h',
++		'include/abi-bits/ino_t.h',
++		'include/abi-bits/ipc.h',
++		'include/abi-bits/limits.h',
++		'include/abi-bits/mode_t.h',
++		'include/abi-bits/mqueue.h',
++		'include/abi-bits/msg.h',
++		'include/abi-bits/nlink_t.h',
++		'include/abi-bits/pid_t.h',
++		'include/abi-bits/poll.h',
++		'include/abi-bits/resource.h',
++		'include/abi-bits/rlim_t.h',
++		'include/abi-bits/sa_family_t.h',
++		'include/abi-bits/seek-whence.h',
++		'include/abi-bits/sem.h',
++		'include/abi-bits/shm.h',
++		'include/abi-bits/sigevent.h',
++		'include/abi-bits/sig-limits.h',
++		'include/abi-bits/signal.h',
++		'include/abi-bits/sigset_t.h',
++		'include/abi-bits/sigval.h',
++		'include/abi-bits/socket.h',
++		'include/abi-bits/sockaddr_storage.h',
++		'include/abi-bits/socklen_t.h',
++		'include/abi-bits/stat.h',
++		'include/abi-bits/statvfs.h',
++		'include/abi-bits/suseconds_t.h',
++		'include/abi-bits/termios.h',
++		'include/abi-bits/time.h',
++		'include/abi-bits/uid_t.h',
++		'include/abi-bits/utmp-defines.h',
++		'include/abi-bits/utmpx.h',
++		'include/abi-bits/utsname.h',
++		'include/abi-bits/vm-flags.h',
++		'include/abi-bits/wait.h',
++		subdir: 'abi-bits'
++	)
++
++	install_headers('include/syscall.h')
++	install_headers('include/sys/syscall.h', subdir: 'sys')
++	install_headers('include/bits/syscall.h', subdir: 'bits')
++endif
++
++if not headers_only
++	custom_target('crt1',
++		build_by_default: true,
++		command: c_compiler.cmd_array() + ['-c', '-o', '@OUTPUT@', '@INPUT@'],
++		input: normalized_cpu_family / 'crt-src/crt1.S',
++		output: 'crt1.o',
++		install: true,
++		install_dir: get_option('libdir')
++	)
++
++	custom_target('Scrt1',
++		build_by_default: true,
++		command: c_compiler.cmd_array() + ['-fPIE', '-c', '-o', '@OUTPUT@', '@INPUT@'],
++		input: normalized_cpu_family / 'crt-src/Scrt1.S',
++		output: 'Scrt1.o',
++		install: true,
++		install_dir: get_option('libdir')
++	)
++
++	custom_target('crti',
++		build_by_default: true,
++		command: c_compiler.cmd_array() + ['-c', '-o', '@OUTPUT@', '@INPUT@'],
++		input: normalized_cpu_family / 'crt-src/crti.S',
++		output: 'crti.o',
++		install: true,
++		install_dir: get_option('libdir')
++	)
++
++	custom_target('crtn',
++		build_by_default: true,
++		command: c_compiler.cmd_array() + ['-c', '-o', '@OUTPUT@', '@INPUT@'],
++		input: normalized_cpu_family / 'crt-src/crtn.S',
++		output: 'crtn.o',
++		install: true,
++		install_dir: get_option('libdir')
++	)
++endif
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/x86/arch-syscall.S mlibc-workdir/sysdeps/svr4/x86/arch-syscall.S
+new file mode 100644
+index 0000000..2cdf3b7
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/arch-syscall.S
+@@ -0,0 +1,79 @@
++.section .text
++
++.macro svr4_shift_and_call nargs
++	.if \nargs >= 1
++		mov 8(%esp), %edx
++		mov %edx, 4(%esp)
++	.endif
++	.if \nargs >= 2
++		mov 12(%esp), %edx
++		mov %edx, 8(%esp)
++	.endif
++	.if \nargs >= 3
++		mov 16(%esp), %edx
++		mov %edx, 12(%esp)
++	.endif
++	.if \nargs >= 4
++		mov 20(%esp), %edx
++		mov %edx, 16(%esp)
++	.endif
++	.if \nargs >= 5
++		mov 24(%esp), %edx
++		mov %edx, 20(%esp)
++	.endif
++	.if \nargs >= 6
++		mov 28(%esp), %edx
++		mov %edx, 24(%esp)
++	.endif
++	.if \nargs >= 7
++		mov 32(%esp), %edx
++		mov %edx, 28(%esp)
++	.endif
++	mov 4(%esp), %eax
++	lcall $0x7, $0
++	ret
++.endm
++
++.global __do_syscall0
++.type __do_syscall0, @function
++__do_syscall0:
++	mov 4(%esp), %eax
++	lcall $0x7, $0
++	ret
++
++.global __do_syscall1
++.type __do_syscall1, @function
++__do_syscall1:
++	svr4_shift_and_call 1
++
++.global __do_syscall2
++.type __do_syscall2, @function
++__do_syscall2:
++	svr4_shift_and_call 2
++
++.global __do_syscall3
++.type __do_syscall3, @function
++__do_syscall3:
++	svr4_shift_and_call 3
++
++.global __do_syscall4
++.type __do_syscall4, @function
++__do_syscall4:
++	svr4_shift_and_call 4
++
++.global __do_syscall5
++.type __do_syscall5, @function
++__do_syscall5:
++	svr4_shift_and_call 5
++
++.global __do_syscall6
++.type __do_syscall6, @function
++__do_syscall6:
++	svr4_shift_and_call 6
++
++.global __do_syscall7
++.type __do_syscall7, @function
++__do_syscall7:
++	svr4_shift_and_call 7
++
++.section .note.GNU-stack,"",%progbits
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/x86/assembly-asserts.cpp mlibc-workdir/sysdeps/svr4/x86/assembly-asserts.cpp
+new file mode 100644
+index 0000000..cf21ff2
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/assembly-asserts.cpp
+@@ -0,0 +1 @@
++// Intentionally empty scaffold file to match the Linux sysdeps layout.
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/x86/cp_syscall.S mlibc-workdir/sysdeps/svr4/x86/cp_syscall.S
+new file mode 100644
+index 0000000..c8a49db
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/cp_syscall.S
+@@ -0,0 +1,26 @@
++.section .text
++
++.global __mlibc_do_asm_cp_syscall
++.global __mlibc_syscall_begin
++.global __mlibc_syscall_end
++.type __mlibc_do_asm_cp_syscall, @function
++__mlibc_do_asm_cp_syscall:
++	mov 8(%esp), %eax
++	mov 12(%esp), %edx
++	mov %edx, 8(%esp)
++	mov 16(%esp), %edx
++	mov %edx, 12(%esp)
++	mov 20(%esp), %edx
++	mov %edx, 16(%esp)
++	mov 24(%esp), %edx
++	mov %edx, 20(%esp)
++	mov 28(%esp), %edx
++	mov %edx, 24(%esp)
++	mov 32(%esp), %edx
++	mov %edx, 28(%esp)
++__mlibc_syscall_begin:
++	lcall $0x7, $0
++__mlibc_syscall_end:
++	ret
++
++.section .note.GNU-stack,"",%progbits
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/x86/crt-src/Scrt1.S mlibc-workdir/sysdeps/svr4/x86/crt-src/Scrt1.S
+new file mode 100644
+index 0000000..6fc463c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/crt-src/Scrt1.S
+@@ -0,0 +1,57 @@
++.section .text
++
++.type __stack_chk_fail_local, %function
++.weak __stack_chk_fail_local
++__stack_chk_fail_local:
++	call __stack_chk_fail@plt
++
++.global _start
++
++.type _start, %function
++.type main, %function
++.type __mlibc_entry, %function
++
++.cfi_startproc
++_start:
++.cfi_undefined eip
++	xor %ebp, %ebp
++	mov %esp, %edi
++	call 1f
++
++1:
++	pop %ebx
++	addl $_GLOBAL_OFFSET_TABLE_+[.-1b], %ebx
++	push main@GOT(%ebx)
++	push %edi
++	call __mlibc_entry@plt
++.cfi_endproc
++
++.section .note.GNU-stack,"",%progbits.section .text
++
++.type __stack_chk_fail_local, %function
++.weak __stack_chk_fail_local
++__stack_chk_fail_local:
++	call __stack_chk_fail@plt
++
++.global _start
++
++.type _start, %function
++.type main, %function
++.type __mlibc_entry, %function
++
++.cfi_startproc
++_start:
++.cfi_undefined eip
++	xor %ebp, %ebp
++	mov %esp, %edi
++	call 1f
++
++1:
++	pop %ebx
++	addl $_GLOBAL_OFFSET_TABLE_+[.-1b], %ebx
++	push main@GOT(%ebx)
++	push %edi
++	call __mlibc_entry@plt
++.cfi_endproc
++
++.section .note.GNU-stack,"",%progbits
+diff --git mlibc-workdir/sysdeps/svr4/x86/crt-src/crt1.S mlibc-workdir/sysdeps/svr4/x86/crt-src/crt1.S
+new file mode 100644
+index 0000000..e43d12c
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/crt-src/crt1.S
+@@ -0,0 +1,35 @@
++.section .text
++.global _start
++
++.type _start, %function
++.type main, %function
++.type __mlibc_entry, %function
++
++.cfi_startproc
++_start:
++.cfi_undefined eip
++	xor %ebp, %ebp
++	mov %esp, %ecx
++	push $main
++	push %ecx
++	call __mlibc_entry
++.cfi_endproc
++
++.section .note.GNU-stack,"",%progbits.section .text
++.global _start
++
++.type _start, %function
++.type main, %function
++.type __mlibc_entry, %function
++
++.cfi_startproc
++_start:
++.cfi_undefined eip
++	xor %ebp, %ebp
++	mov %esp, %ecx
++	push $main
++	push %ecx
++	call __mlibc_entry
++.cfi_endproc
++
++.section .note.GNU-stack,"",%progbits
+diff --git mlibc-workdir/sysdeps/svr4/x86/crt-src/crti.S mlibc-workdir/sysdeps/svr4/x86/crt-src/crti.S
+new file mode 100644
+index 0000000..dc4fdca
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/crt-src/crti.S
+@@ -0,0 +1,21 @@
++.section .init
++.global _init
++_init:
++	pushl %eax
++
++.section .fini
++.global _fini
++_fini:
++	pushl %eax
++
++.section .note.GNU-stack,"",%progbits.section .init
++.global _init
++_init:
++	pushl %eax
++
++.section .fini
++.global _fini
++_fini:
++	pushl %eax
++
++.section .note.GNU-stack,"",%progbits
+diff --git mlibc-workdir/sysdeps/svr4/x86/crt-src/crtn.S mlibc-workdir/sysdeps/svr4/x86/crt-src/crtn.S
+new file mode 100644
+index 0000000..014809d
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/crt-src/crtn.S
+@@ -0,0 +1,17 @@
++.section .init
++	popl %eax
++	ret
++
++.section .fini
++	popl %eax
++	ret
++
++.section .note.GNU-stack,"",%progbits.section .init
++	popl %eax
++	ret
++
++.section .fini
++	popl %eax
++	ret
++
++.section .note.GNU-stack,"",%progbits
+diff --git mlibc-workdir/sysdeps/svr4/x86/signals.S mlibc-workdir/sysdeps/svr4/x86/signals.S
+new file mode 100644
+index 0000000..780fbf7
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/signals.S
+@@ -0,0 +1,15 @@
++.section .text
++
++.global __mlibc_signal_restore
++.type __mlibc_signal_restore, @function
++__mlibc_signal_restore:
++	lcall $0xF, $0
++	ud2
++
++.global __mlibc_signal_restore_rt
++.type __mlibc_signal_restore_rt, @function
++__mlibc_signal_restore_rt:
++	lcall $0xF, $0
++	ud2
++
++.section .note.GNU-stack,"",%progbits
+\ No newline at end of file
+diff --git mlibc-workdir/sysdeps/svr4/x86/thread_entry.S mlibc-workdir/sysdeps/svr4/x86/thread_entry.S
+new file mode 100644
+index 0000000..bcd3679
+--- /dev/null
++++ mlibc-workdir/sysdeps/svr4/x86/thread_entry.S
+@@ -0,0 +1,9 @@
++.section .text
++
++.global __mlibc_spawn_thread
++.type __mlibc_spawn_thread, @function
++__mlibc_spawn_thread:
++	mov $-38, %eax
++	ret
++
++.section .note.GNU-stack,"",%progbits
+\ No newline at end of file

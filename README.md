@@ -5,7 +5,7 @@ This is a project to play around with the source code of UNIX SVR4 kernel, basic
 The future end-goal is to derive a usable operating system from it using a modern userspace, including a port of a modern C library (mlibc) and the works.
 Right now, the kernel (`uts`) does compile, and can boot the minimal rootfs in ramdisk that exists from the boot install floppy (provide your own under a folder called `original_diskettes` for the build system to be able to create this).
 
-# Building
+# Building the kernel
 
 This project uses a custom build system. It is quite basic and stupid, and kinda vibecoded, but it does work right now. You'll want to create a python venv and install the packages under `requirements.txt` for it to work. It uses the system compiler, I haven't made a cross-compiler yet.
 
@@ -20,6 +20,28 @@ This should create a boot floppy under `build/boot-media/base01-boot.img`. Most 
 Other potentially useful build targets include:
 - `boot-floppy-hybrid-at386` makes a image containing our bootloader and the original kernel under `{builddir}/boot-media/base01-hybrid.img`
 - `kernel-system-at386` builds the complete kernel, closer to what you'd run on a installed system.
+
+# Building the distro with Jinx
+
+In a seperate build directory, run:
+
+```sh
+../jinx ..
+```
+
+Afterwards, edit the generated `.jinx-parameters` file, and change the `JINX_ARCH` variable to `i686`, similar to this:
+
+```
+#! /bin/sh
+
+JINX_SOURCE_DIR=".."
+JINX_ARCH="i686"      # Defaults to your local systems architecture
+```
+
+## Note about kernel name
+
+The kernel will report itself as `svr4` rather than `sysv4` or anything. This is partially by mistake - I set my brain on it quite hard, but also ended up helping with some GNU ports that specifically check against a list of targets they no longer support (looking at you, binutils :3), and `svr4` passes all those, rather than getting caught by it.
+This does mean we won't get picked up as UNIX by things that do check, but oh well.
 
 # Documentation
 

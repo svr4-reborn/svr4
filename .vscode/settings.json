@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^\\.\\./jinx build mlibc$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
