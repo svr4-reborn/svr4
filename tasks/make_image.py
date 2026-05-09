@@ -51,11 +51,14 @@ ELF_HEADER_SIZE = 52
 ELF_PROGRAM_HEADER_SIZE = 32
 PT_LOAD = 1
 _DEFAULT_DEVICE_ASSIGNMENTS = {
+    '/dev/console': (UFS_IFCHR, 30, 0),
     '/dev/root': (UFS_IFBLK, 0, 1),
     '/dev/pipe': (UFS_IFBLK, 0, 1),
     '/dev/swap': (UFS_IFBLK, 0, 2),
     '/dev/dump': (UFS_IFBLK, 0, 2),
+    '/dev/null': (UFS_IFCHR, 2, 2),
     '/dev/sysmsg': (UFS_IFCHR, 19, 0),
+    '/dev/zero': (UFS_IFCHR, 2, 4),
 }
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -262,6 +265,15 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
                 make_ufs_directory(image, filesystem, '/stand', recompute_summary=False)
                 continue
             host_path = sysroot / relative_path
+            if os.path.islink(host_path):
+                symlink_ufs_path(
+                    image,
+                    filesystem,
+                    os.readlink(host_path),
+                    '/' + relative_path.as_posix(),
+                    recompute_summary=False,
+                )
+                continue
             mode = host_path.lstat().st_mode & 0o777
             make_ufs_directory(
                 image,
@@ -270,6 +282,12 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
                 mode=mode or 0o755,
                 recompute_summary=False,
             )
+
+        dirnames[:] = [
+            directory_name
+            for directory_name in dirnames
+            if not os.path.islink(sysroot / relative_dir / directory_name)
+        ]
 
         for file_name in filenames:
             relative_path = relative_dir / file_name
@@ -320,6 +338,32 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             if len(fields) < 6 or fields[0] != 'sysmsg':
                 break
             assignments['/dev/sysmsg'] = (UFS_IFCHR, int(fields[5], 0), 0)
+            break
+
+    mem_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/mem'
+    if mem_mdevice_path.is_file():
+        for line in mem_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'mem':
+                break
+            mem_major = int(fields[5], 0)
+            assignments['/dev/null'] = (UFS_IFCHR, mem_major, 2)
+            assignments['/dev/zero'] = (UFS_IFCHR, mem_major, 4)
+            break
+
+    kd_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/kd'
+    if kd_mdevice_path.is_file():
+        for line in kd_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'kd':
+                break
+            assignments['/dev/console'] = (UFS_IFCHR, int(fields[5], 0), 0)
             break
     return assignments
 
