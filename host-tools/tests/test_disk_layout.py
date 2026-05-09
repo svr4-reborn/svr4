@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pyfuse3
 import trio
 
+import host_tools.fs.ufs as ufs_module
 
 from host_tools.disk.cli import format_bfs_path
 from host_tools.disk.create import ACTIVE_PARTITION_CHAINLOADER_MBR, RawDiskGeometry, create_raw_image_skeleton
@@ -22,7 +23,7 @@ from host_tools.fs.bfs_fuse import BFSOperations, BFSVolume, make_test_context a
 from host_tools.fs.common import BFS_MAGIC, UFS_DINODE_SIZE
 from host_tools.fs.ufs import build_ufs_directory_block, format_ufs_filesystem, make_ufs_directory, create_ufs_file, read_ufs_path_bytes
 from host_tools.fs.common import UFS_FS_BSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_MAGIC, UFS_SB_OFFSET
-from host_tools.fs.ufs import UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NINDIR_OFFSET
+from host_tools.fs.ufs import UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_CSMASK_OFFSET, UFS_FS_CSSHIFT_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NINDIR_OFFSET
 from host_tools.fs.ufs_fuse import UFSOperations, UFSVolume, make_test_context
 from host_tools.fs.ufs_lowlevel import detect_ufs as detect_ufs_lowlevel, read_ufs_file as read_ufs_file_lowlevel, read_ufs_inode as read_ufs_inode_lowlevel, ufs_inode_offset as ufs_inode_offset_lowlevel
 from test_ufs_namespace import build_test_filesystem
@@ -309,6 +310,26 @@ class DiskLayoutTests(unittest.TestCase):
         self.assertEqual(detected[0].super_offset, UFS_SB_OFFSET)
         self.assertEqual(detected[0].start_offset, 0)
         self.assertEqual(read_ufs_path_bytes(bytes(slice_image), filesystem, '/etc/motd')[2], b'svr4\n')
+
+    def test_format_ufs_filesystem_populates_summary_index_fields(self) -> None:
+        slice_image = bytearray(16 * 1024 * 1024)
+
+        ufs_module._UFS_METADATA_NORMALIZATION_STATE.clear()
+        format_ufs_filesystem(slice_image)
+
+        csmask = int.from_bytes(
+            slice_image[UFS_SB_OFFSET + UFS_FS_CSMASK_OFFSET:UFS_SB_OFFSET + UFS_FS_CSMASK_OFFSET + 4],
+            'little',
+            signed=False,
+        )
+        csshift = int.from_bytes(
+            slice_image[UFS_SB_OFFSET + UFS_FS_CSSHIFT_OFFSET:UFS_SB_OFFSET + UFS_FS_CSSHIFT_OFFSET + 4],
+            'little',
+            signed=False,
+        )
+
+        self.assertEqual(csmask, 0xFFFFFE00)
+        self.assertEqual(csshift, 9)
 
     def test_bfs_volume_uses_absolute_slice_offset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

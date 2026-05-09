@@ -281,6 +281,9 @@ def build_ufs_filesystem_image(
     summary_bytes = cylinder_groups * UFS_CSUM_SIZE
     summary_area_bytes = _align_up(summary_bytes, fragment_size)
     summary_fragments = summary_area_bytes // fragment_size
+    csums_per_block = block_size // UFS_CSUM_SIZE
+    csshift = _power_of_two_shift(csums_per_block)
+    csmask = _u32_mask(-csums_per_block)
     if summary_frag_number + summary_fragments > cylinder_group_frag_number:
         raise SystemExit('error: UFS cylinder summary area overlaps the cylinder group block')
 
@@ -311,6 +314,8 @@ def build_ufs_filesystem_image(
             'nspf': fragment_size // SECTOR_SIZE,
             'csaddr': summary_frag_number,
             'cssize': summary_area_bytes,
+            'csmask': csmask,
+            'csshift': csshift,
             'nsect': sectors_per_track,
             'spc': tracks_per_cylinder * sectors_per_track,
             'ncyl': total_cylinders,
@@ -347,8 +352,8 @@ def build_ufs_filesystem_image(
     image[super_offset + UFS_FS_FRAGSHIFT_OFFSET:super_offset + UFS_FS_FRAGSHIFT_OFFSET + 4] = fragshift.to_bytes(4, 'little', signed=True)
     image[super_offset + UFS_FS_FSBTODB_OFFSET:super_offset + UFS_FS_FSBTODB_OFFSET + 4] = fsbtodb.to_bytes(4, 'little', signed=False)
     image[super_offset + UFS_FS_SBSIZE_OFFSET:super_offset + UFS_FS_SBSIZE_OFFSET + 4] = min(UFS_SB_SIZE, block_size).to_bytes(4, 'little', signed=False)
-    image[super_offset + UFS_FS_CSMASK_OFFSET:super_offset + UFS_FS_CSMASK_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
-    image[super_offset + UFS_FS_CSSHIFT_OFFSET:super_offset + UFS_FS_CSSHIFT_OFFSET + 4] = (0).to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CSMASK_OFFSET:super_offset + UFS_FS_CSMASK_OFFSET + 4] = csmask.to_bytes(4, 'little', signed=False)
+    image[super_offset + UFS_FS_CSSHIFT_OFFSET:super_offset + UFS_FS_CSSHIFT_OFFSET + 4] = csshift.to_bytes(4, 'little', signed=False)
     image[super_offset + UFS_FS_NINDIR_OFFSET:super_offset + UFS_FS_NINDIR_OFFSET + 4] = (block_size // 4).to_bytes(4, 'little', signed=False)
     image[super_offset + UFS_FS_INOPB_OFFSET:super_offset + UFS_FS_INOPB_OFFSET + 4] = inodes_per_block.to_bytes(4, 'little', signed=False)
     image[super_offset + UFS_FS_NSPF_OFFSET:super_offset + UFS_FS_NSPF_OFFSET + 4] = (fragment_size // SECTOR_SIZE).to_bytes(4, 'little', signed=False)
