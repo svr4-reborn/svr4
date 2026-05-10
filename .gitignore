@@ -15,3 +15,6 @@ __pycache__/
 
 .jinx-cache/
 sources/
+
+# MkDocs build output
+site/

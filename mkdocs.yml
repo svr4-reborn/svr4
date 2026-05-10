@@ -1,0 +1,31 @@
+site_name: SVR4 Kernel Notes
+site_description: Kernel bringup, tooling, and syscall ABI documentation for the SVR4 source tree
+repo_name: classic_unix_playing/svr4-src
+docs_dir: docs
+use_directory_urls: false
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: blue grey
+      accent: amber
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - tables
+  - toc:
+      permalink: true
+nav:
+  - Home: index.md
+  - Syscalls:
+      - Reference: syscalls.md
+      - Porting Guide: syscall-porting-guide.md
+      - Multiplexed Families: syscall-families.md
+  - Bringup:
+      - Boot Floppy Tooling: boot-floppy-tooling.md
+      - Bringup Debug Notes: bringup-debug-notes-2026-05-06.md
