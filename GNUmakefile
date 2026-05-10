@@ -17,12 +17,17 @@ build-mlibc $(SYSROOT)/usr/lib/libc.so: $(BUILD_FOLDER)/.jinx-parameters
 	@cd $(BUILD_FOLDER) && ../jinx build mlibc
 	@cd $(BUILD_FOLDER) && ../jinx install -f sysroot mlibc
 
+BASE_PKGS=svr4_init bash coreutils
+.PHONY: ensure-installed
+ensure-installed:
+	@cd $(BUILD_FOLDER) && ../jinx install -f sysroot $(BASE_PKGS)
+
 .PHONY: hdd
-hdd $(HDD_IMAGE): $(BUILD_FOLDER)/.jinx-parameters $(SYSROOT)/stand/unix $(SYSROOT)/usr/lib/libc.so
+hdd $(HDD_IMAGE): $(BUILD_FOLDER)/.jinx-parameters $(SYSROOT)/stand/unix $(SYSROOT)/usr/lib/libc.so ensure-installed
 	source .venv/bin/activate && python3 tasks/make_image.py \
 		--image $(HDD_IMAGE) \
 		--sysroot $(SYSROOT)
 
 .PHONY: qemu
 qemu: $(HDD_IMAGE)
-	qemu-system-i386 -drive format=raw,file=$(HDD_IMAGE) -net none -boot c -m 64
+	qemu-system-i386 -drive format=raw,file=$(HDD_IMAGE) -net none -boot c -m 128 -debugcon stdio
