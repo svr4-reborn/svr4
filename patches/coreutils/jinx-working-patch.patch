@@ -1,0 +1,49 @@
+diff -urN --no-dereference coreutils-clean/gnulib-tests/getlocalename_l-unsafe.c coreutils-workdir/gnulib-tests/getlocalename_l-unsafe.c
+--- coreutils-clean/gnulib-tests/getlocalename_l-unsafe.c
++++ coreutils-workdir/gnulib-tests/getlocalename_l-unsafe.c
+@@ -469,6 +469,8 @@
+       struct gl_locale_category_t *plc =
+         &locale->category[gl_log2_lcmask_to_index (gl_log2_lc_mask (category))];
+       return (struct string_with_storage) { plc->name, STORAGE_OBJECT };
++#elif defined __mlibc__
++      return (struct string_with_storage) { "C", STORAGE_INDEFINITE };
+ #elif __GLIBC__ >= 2 && !defined __UCLIBC__
+       /* Work around an incorrect definition of the _NL_LOCALE_NAME macro in
+          glibc < 2.12.
+diff -urN --no-dereference coreutils-clean/lib/getlocalename_l-unsafe.c coreutils-workdir/lib/getlocalename_l-unsafe.c
+--- coreutils-clean/lib/getlocalename_l-unsafe.c
++++ coreutils-workdir/lib/getlocalename_l-unsafe.c
+@@ -469,6 +469,8 @@
+       struct gl_locale_category_t *plc =
+         &locale->category[gl_log2_lcmask_to_index (gl_log2_lc_mask (category))];
+       return (struct string_with_storage) { plc->name, STORAGE_OBJECT };
++#elif defined __mlibc__
++      return (struct string_with_storage) { "C", STORAGE_INDEFINITE };
+ #elif __GLIBC__ >= 2 && !defined __UCLIBC__
+       /* Work around an incorrect definition of the _NL_LOCALE_NAME macro in
+          glibc < 2.12.
+diff -urN --no-dereference coreutils-clean/lib/getloadavg.c coreutils-workdir/lib/getloadavg.c
+--- coreutils-clean/lib/getloadavg.c
++++ coreutils-workdir/lib/getloadavg.c
+@@ -132,7 +132,7 @@
+ #  define MORE_BSD
+ # endif
+ 
+-# if defined (__SVR4) && !defined (SVR4)
++# if defined (__SVR4) && !defined (SVR4) && !defined (__mlibc__)
+ #  define SVR4
+ # endif
+ 
+diff -urN --no-dereference coreutils-clean/src/cksum.c coreutils-workdir/src/cksum.c
+--- coreutils-clean/src/cksum.c
++++ coreutils-workdir/src/cksum.c
+@@ -144,7 +144,7 @@
+ static cksum_fp_t
+ pclmul_supported (void)
+ {
+-# if USE_PCLMUL_CRC32 || GL_CRC_X86_64_PCLMUL
++# if USE_PCLMUL_CRC32 || (GL_CRC_X86_64_PCLMUL && defined __x86_64__)
+  bool pclmul_enabled = (0 < __builtin_cpu_supports ("pclmul")
+                  && 0 < __builtin_cpu_supports ("avx"));
+  if (cksum_debug)
+
