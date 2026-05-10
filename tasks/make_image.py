@@ -38,10 +38,14 @@ format_bfs_filesystem = _fs_bfs.format_bfs_filesystem
 create_ufs_file = _fs_ufs.create_ufs_file
 create_ufs_special_file = _fs_ufs.create_ufs_special_file
 format_ufs_filesystem = _fs_ufs.format_ufs_filesystem
+link_ufs_path = _fs_ufs.link_ufs_path
 make_ufs_directory = _fs_ufs.make_ufs_directory
+resolve_ufs_path = _fs_ufs.resolve_ufs_path
+read_ufs_inode = _fs_ufs.read_ufs_inode
 symlink_ufs_path = _fs_ufs.symlink_ufs_path
 UFS_IFBLK = _fs_ufs.UFS_IFBLK
 UFS_IFCHR = _fs_ufs.UFS_IFCHR
+UFS_ROOT_INODE = _fs_ufs.UFS_ROOT_INODE
 recompute_ufs_summary_counts = _fs_ufs.recompute_ufs_summary_counts
 
 
@@ -52,6 +56,14 @@ ELF_PROGRAM_HEADER_SIZE = 32
 PT_LOAD = 1
 _DEFAULT_DEVICE_ASSIGNMENTS = {
     '/dev/console': (UFS_IFCHR, 30, 0),
+    '/dev/syscon': (UFS_IFCHR, 30, 0),
+    '/dev/vt00': (UFS_IFCHR, 5, 0),
+    '/dev/vtmon': (UFS_IFCHR, 30, 15),
+    '/dev/vidadm': (UFS_IFCHR, 29, 1),
+    '/dev/kd/kd00': (UFS_IFCHR, 30, 0),
+    '/dev/kd/kdvm00': (UFS_IFCHR, 20, 0),
+    '/dev/sad/admin': (UFS_IFCHR, 25, 1),
+    '/dev/sad/user': (UFS_IFCHR, 25, 0),
     '/dev/root': (UFS_IFBLK, 0, 1),
     '/dev/pipe': (UFS_IFBLK, 0, 1),
     '/dev/swap': (UFS_IFBLK, 0, 2),
@@ -64,10 +76,11 @@ _DEFAULT_DEVICE_ASSIGNMENTS = {
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Build the hard drive image for SVR4')
     parser.add_argument('--image', required=True, help='Path to the output image file')
-    parser.add_argument('--size', default=128, help='Size of the image in megabytes (default: 128)')
+    parser.add_argument('--size', default=324, help='Size of the image in megabytes (default: 160)')
     parser.add_argument('--sysroot', default=str(REPO_ROOT / 'build/sysroot'), help='Path to the sysroot produced by Jinx')
     parser.add_argument('--stand-size', default=16, help='Size of the BFS /stand slice in megabytes (default: 16)')
-    parser.add_argument('--swap-size', default=32, help='Size of the raw swap slice in megabytes (default: 32)')
+    parser.add_argument('--swap-size', default=64, help='Size of the raw swap slice in megabytes (default: 32)')
+    parser.add_argument('--ufs-bytes-per-inode', default=8192, help='Target UFS inode density in bytes per inode (default: 8192)')
     parser.add_argument('--heads', default=16, help='Disk geometry heads value (default: 16)')
     parser.add_argument('--sectors', default=63, help='Disk geometry sectors-per-track value (default: 63)')
     parser.add_argument('--stand-start-sector', default=64, help='Absolute disk sector where the stand slice starts (default: 64)')
@@ -248,13 +261,22 @@ def _ensure_ufs_parent_directories(image: bytearray, filesystem: Any, relative_p
 
 
 def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> None:
+    directory_inode_cache: dict[Path, int] = {Path('.'): UFS_ROOT_INODE}
+
     for dirpath, dirnames, filenames in os.walk(sysroot, topdown=True, followlinks=False):
         dir_path = Path(dirpath)
         relative_dir = dir_path.relative_to(sysroot)
         dirnames.sort()
         filenames.sort()
 
-        _ensure_ufs_parent_directories(image, filesystem, relative_dir)
+        current_inode_number = directory_inode_cache.get(relative_dir)
+        if current_inode_number is None:
+            resolved_current = resolve_ufs_path(image, filesystem, '/' + relative_dir.as_posix())
+            if resolved_current is None:
+                raise SystemExit(f'error: could not resolve populated UFS directory /{relative_dir.as_posix()}')
+            current_inode_number, _ = resolved_current
+            directory_inode_cache[relative_dir] = current_inode_number
+
         if relative_dir == Path('stand'):
             dirnames[:] = []
             continue
@@ -271,17 +293,20 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
                     filesystem,
                     os.readlink(host_path),
                     '/' + relative_path.as_posix(),
+                    parent_inode_number=current_inode_number,
                     recompute_summary=False,
                 )
                 continue
             mode = host_path.lstat().st_mode & 0o777
-            make_ufs_directory(
+            result = make_ufs_directory(
                 image,
                 filesystem,
                 '/' + relative_path.as_posix(),
                 mode=mode or 0o755,
+                parent_inode_number=current_inode_number,
                 recompute_summary=False,
             )
+            directory_inode_cache[relative_path] = int(result['inode'])
 
         dirnames[:] = [
             directory_name
@@ -297,7 +322,14 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
             guest_path = '/' + relative_path.as_posix()
             host_stat = host_path.lstat()
             if os.path.islink(host_path):
-                symlink_ufs_path(image, filesystem, os.readlink(host_path), guest_path, recompute_summary=False)
+                symlink_ufs_path(
+                    image,
+                    filesystem,
+                    os.readlink(host_path),
+                    guest_path,
+                    parent_inode_number=current_inode_number,
+                    recompute_summary=False,
+                )
                 continue
             if not host_path.is_file():
                 raise SystemExit(f'error: unsupported sysroot entry {host_path}')
@@ -307,6 +339,7 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
                 guest_path,
                 host_path.read_bytes(),
                 mode=host_stat.st_mode & 0o777 or 0o644,
+                parent_inode_number=current_inode_number,
                 recompute_summary=False,
             )
 
@@ -354,6 +387,18 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/zero'] = (UFS_IFCHR, mem_major, 4)
             break
 
+    cmux_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/cmux'
+    if cmux_mdevice_path.is_file():
+        for line in cmux_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'cmux':
+                break
+            assignments['/dev/vt00'] = (UFS_IFCHR, int(fields[5], 0), 0)
+            break
+
     kd_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/kd'
     if kd_mdevice_path.is_file():
         for line in kd_mdevice_path.read_text().splitlines():
@@ -364,6 +409,49 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             if len(fields) < 6 or fields[0] != 'kd':
                 break
             assignments['/dev/console'] = (UFS_IFCHR, int(fields[5], 0), 0)
+            assignments['/dev/syscon'] = assignments['/dev/console']
+            assignments['/dev/vtmon'] = (UFS_IFCHR, int(fields[5], 0), 15)
+            assignments['/dev/kd/kd00'] = (UFS_IFCHR, int(fields[5], 0), 0)
+            assignments['/dev/kd/kd01'] = (UFS_IFCHR, int(fields[5], 0), 1)
+            break
+
+    kdvm_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/kdvm'
+    if kdvm_mdevice_path.is_file():
+        for line in kdvm_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'kdvm':
+                break
+            assignments['/dev/kd/kdvm00'] = (UFS_IFCHR, int(fields[5], 0), 0)
+            assignments['/dev/kd/kdvm01'] = (UFS_IFCHR, int(fields[5], 0), 1)
+            break
+
+    gvid_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/gvid'
+    if gvid_mdevice_path.is_file():
+        for line in gvid_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'gvid':
+                break
+            assignments['/dev/vidadm'] = (UFS_IFCHR, int(fields[5], 0), 1)
+            break
+
+    sad_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/sad'
+    if sad_mdevice_path.is_file():
+        for line in sad_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'sad':
+                break
+            sad_major = int(fields[5], 0)
+            assignments['/dev/sad/user'] = (UFS_IFCHR, sad_major, 0)
+            assignments['/dev/sad/admin'] = (UFS_IFCHR, sad_major, 1)
             break
     return assignments
 
@@ -371,6 +459,16 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
 def _populate_required_device_nodes(image: bytearray, filesystem: Any) -> None:
     try:
         make_ufs_directory(image, filesystem, '/dev', mode=0o755, recompute_summary=False)
+    except SystemExit as error:
+        if 'already exists inside the ufs filesystem' not in str(error):
+            raise
+    try:
+        make_ufs_directory(image, filesystem, '/dev/kd', mode=0o755, recompute_summary=False)
+    except SystemExit as error:
+        if 'already exists inside the ufs filesystem' not in str(error):
+            raise
+    try:
+        make_ufs_directory(image, filesystem, '/dev/sad', mode=0o755, recompute_summary=False)
     except SystemExit as error:
         if 'already exists inside the ufs filesystem' not in str(error):
             raise
@@ -384,11 +482,17 @@ def _populate_required_device_nodes(image: bytearray, filesystem: Any) -> None:
                 major=major,
                 minor=minor,
                 mode=0o600,
+                parent_inode_number=UFS_ROOT_INODE if path.count('/') == 1 else None,
                 recompute_summary=False,
             )
         except SystemExit as error:
             if 'already exists inside the ufs filesystem' not in str(error):
                 raise
+    try:
+        link_ufs_path(image, filesystem, '/dev/syscon', '/dev/systty')
+    except SystemExit as error:
+        if 'already exists inside the ufs filesystem' not in str(error):
+            raise
 
 
 def _prepare_base_image(
@@ -422,6 +526,7 @@ def build_image(args: argparse.Namespace) -> None:
     size_mb = _parse_positive_int(str(args.size), name='size')
     stand_size_mb = _parse_positive_int(str(args.stand_size), name='stand-size')
     swap_size_mb = _parse_positive_int(str(args.swap_size), name='swap-size')
+    ufs_bytes_per_inode = _parse_positive_int(str(args.ufs_bytes_per_inode), name='--ufs-bytes-per-inode')
     heads = _parse_positive_int(str(args.heads), name='heads')
     sectors_per_track = _parse_positive_int(str(args.sectors), name='sectors')
     stand_start_sector = _parse_positive_int(str(args.stand_start_sector), name='stand-start-sector')
@@ -474,6 +579,7 @@ def build_image(args: argparse.Namespace) -> None:
             root_slice_bytes,
             timestamp=int(time.time()),
             block_size=4096,
+            bytes_per_inode=ufs_bytes_per_inode,
             tracks_per_cylinder=geometry.heads,
             sectors_per_track=geometry.sectors_per_track,
         )

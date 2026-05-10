@@ -184,6 +184,47 @@ def resolve_ufs_parent(image: bytes, filesystem: FilesystemCandidate, path: str)
     return parent_path, name, parent_inode_number, parent_inode
 
 
+def lookup_ufs_directory_entry(
+    image: ImageBuffer,
+    filesystem: FilesystemCandidate,
+    directory_inode: dict[str, int | list[int]],
+    entry_name: str,
+) -> tuple[int, dict[str, int | list[int]]] | None:
+    fs = filesystem.details
+    for record in iter_ufs_inode_directory_records(image, filesystem, directory_inode):
+        if record.inode == 0 or record.name != entry_name:
+            continue
+        child_inode = read_ufs_inode(image, filesystem.start_offset, fs, record.inode)
+        if child_inode is None:
+            return None
+        return record.inode, child_inode
+    return None
+
+
+def resolve_ufs_creation_parent(
+    image: ImageBuffer,
+    filesystem: FilesystemCandidate,
+    target_path: str,
+    *,
+    parent_inode_number: int | None = None,
+) -> tuple[str, str, int, dict[str, int | list[int]]]:
+    parent_path, entry_name = split_ufs_parent_path(target_path)
+    if parent_inode_number is None:
+        resolved_parent = resolve_ufs_path(image, filesystem, parent_path)
+        if resolved_parent is None:
+            raise SystemExit(f'error: could not resolve parent path {parent_path} inside the ufs filesystem')
+        parent_inode_number, parent_inode = resolved_parent
+    else:
+        parent_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, parent_inode_number)
+        if parent_inode is None:
+            raise SystemExit(f'error: could not read cached parent inode {parent_inode_number} for {target_path}')
+    if not ufs_is_directory(parent_inode):
+        raise SystemExit(f'error: parent path {parent_path} is not a UFS directory')
+    if lookup_ufs_directory_entry(image, filesystem, parent_inode, entry_name) is not None:
+        raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
+    return parent_path, entry_name, parent_inode_number, parent_inode
+
+
 def build_ufs_directory_block(self_inode_number: int, parent_inode_number: int) -> bytes:
     dot = encode_ufs_directory_entry(self_inode_number, '.', ufs_dirsiz('.'))
     dotdot = encode_ufs_directory_entry(parent_inode_number, '..', UFS_DIRBLKSIZ - len(dot))
@@ -206,13 +247,44 @@ def _align_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
 
 
+def _compute_inode_block_count(
+    image_size: int,
+    *,
+    block_size: int,
+    cylinder_groups: int,
+    fragments_per_group: int,
+    inode_block_number: int,
+    bytes_per_inode: int,
+) -> int:
+    if bytes_per_inode <= 0:
+        raise SystemExit('error: bytes_per_inode must be positive')
+
+    inodes_per_block = block_size // UFS_DINODE_SIZE
+    target_inodes = max((image_size + bytes_per_inode - 1) // bytes_per_inode, 1)
+    target_ipg = max((target_inodes + cylinder_groups - 1) // cylinder_groups, 1)
+    inode_block_count = max((target_ipg + inodes_per_block - 1) // inodes_per_block, 1)
+
+    max_inode_blocks = (fragments_per_group // (block_size // SECTOR_SIZE)) - inode_block_number - 1
+    if max_inode_blocks <= 0:
+        raise SystemExit('error: UFS cylinder group is too small to reserve inode blocks')
+
+    inode_block_count = min(inode_block_count, max_inode_blocks)
+    inodes_per_group = inode_block_count * inodes_per_block
+    if inodes_per_group > MAXIPG:
+        inode_block_count = MAXIPG // inodes_per_block
+        inodes_per_group = inode_block_count * inodes_per_block
+    if inode_block_count <= 0 or inodes_per_group <= 0:
+        raise SystemExit('error: UFS inode layout could not reserve any usable inodes')
+    return inode_block_count
+
+
 def build_ufs_filesystem_image(
     image_size: int,
     *,
     timestamp: int = 0,
     block_size: int = 8192,
     fragment_size: int = SECTOR_SIZE,
-    inode_block_count: int = 4,
+    bytes_per_inode: int = 8192,
     summary_block_number: int = 4,
     cylinder_group_block_number: int = 5,
     inode_block_number: int = 6,
@@ -227,8 +299,6 @@ def build_ufs_filesystem_image(
         raise SystemExit('error: the current UFS formatter only supports 512-byte fragments')
     if block_size % fragment_size != 0:
         raise SystemExit('error: UFS block size must be a whole multiple of the fragment size')
-    if inode_block_count <= 0:
-        raise SystemExit('error: inode_block_count must be positive')
     if (tracks_per_cylinder is None) != (sectors_per_track is None):
         raise SystemExit('error: tracks_per_cylinder and sectors_per_track must be specified together')
     if tracks_per_cylinder is not None and tracks_per_cylinder <= 0:
@@ -241,19 +311,12 @@ def build_ufs_filesystem_image(
     summary_frag_number = summary_block_number << block_shift
     cylinder_group_frag_number = cylinder_group_block_number << block_shift
     inode_frag_number = inode_block_number << block_shift
-    data_frag_number = (inode_block_number + inode_block_count) << block_shift
-    required_bytes = (data_frag_number + fragments_per_block) * fragment_size
-    if image_size < required_bytes:
-        raise SystemExit(f'error: UFS slice is too small ({image_size} bytes); need at least {required_bytes} bytes')
 
     fsbtodb = _power_of_two_shift(fragment_size // SECTOR_SIZE)
     bshift = _power_of_two_shift(block_size)
     fshift = _power_of_two_shift(fragment_size)
     fragshift = _power_of_two_shift(fragments_per_block)
     inodes_per_block = block_size // UFS_DINODE_SIZE
-    inodes_per_group = inode_block_count * inodes_per_block
-    if inodes_per_group > MAXIPG:
-        raise SystemExit(f'error: UFS inode layout exceeds MAXIPG ({inodes_per_group} > {MAXIPG})')
 
     total_fragments = image_size // fragment_size
     if tracks_per_cylinder is None or sectors_per_track is None:
@@ -277,6 +340,20 @@ def build_ufs_filesystem_image(
         cylinders_per_group = min(total_cylinders, MAXCPG, max_cylinders_per_group)
         cylinder_groups = (total_cylinders + cylinders_per_group - 1) // cylinders_per_group
         fragments_per_group = cylinders_per_group * sectors_per_cylinder
+
+    inode_block_count = _compute_inode_block_count(
+        image_size,
+        block_size=block_size,
+        cylinder_groups=cylinder_groups,
+        fragments_per_group=fragments_per_group,
+        inode_block_number=inode_block_number,
+        bytes_per_inode=bytes_per_inode,
+    )
+    inodes_per_group = inode_block_count * inodes_per_block
+    data_frag_number = (inode_block_number + inode_block_count) << block_shift
+    required_bytes = (data_frag_number + fragments_per_block) * fragment_size
+    if image_size < required_bytes:
+        raise SystemExit(f'error: UFS slice is too small ({image_size} bytes); need at least {required_bytes} bytes')
 
     summary_bytes = cylinder_groups * UFS_CSUM_SIZE
     summary_area_bytes = _align_up(summary_bytes, fragment_size)
@@ -401,6 +478,7 @@ def format_ufs_filesystem(
     *,
     timestamp: int = 0,
     block_size: int = 8192,
+    bytes_per_inode: int = 8192,
     tracks_per_cylinder: int | None = None,
     sectors_per_track: int | None = None,
 ) -> FilesystemCandidate:
@@ -408,6 +486,7 @@ def format_ufs_filesystem(
         len(image),
         timestamp=timestamp,
         block_size=block_size,
+        bytes_per_inode=bytes_per_inode,
         tracks_per_cylinder=tracks_per_cylinder,
         sectors_per_track=sectors_per_track,
     )
@@ -570,17 +649,10 @@ def resolve_ufs_path(image: ImageBuffer, filesystem: FilesystemCandidate, path: 
     if not parts:
         return current_inode_number, current_inode
     for part in parts:
-        next_inode_number = None
-        for entry in iter_ufs_directory_entries(image, filesystem, current_inode):
-            if entry['name'] == part:
-                next_inode_number = int(entry['inode'])
-                break
-        if next_inode_number is None:
+        resolved_entry = lookup_ufs_directory_entry(image, filesystem, current_inode, part)
+        if resolved_entry is None:
             return None
-        current_inode_number = next_inode_number
-        current_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, current_inode_number)
-        if current_inode is None:
-            return None
+        current_inode_number, current_inode = resolved_entry
     return current_inode_number, current_inode
 
 
@@ -2031,11 +2103,15 @@ def create_ufs_file(
     gid: int = 0,
     timestamp: int = 0,
     *,
+    parent_inode_number: int | None = None,
     recompute_summary: bool = True,
 ) -> dict[str, int | str]:
-    if resolve_ufs_path(image, filesystem, target_path) is not None:
-        raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
-    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_parent(image, filesystem, target_path)
+    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_creation_parent(
+        image,
+        filesystem,
+        target_path,
+        parent_inode_number=parent_inode_number,
+    )
     new_inode_number = allocate_ufs_inode(image, filesystem, preferred_inode=parent_inode_number)
     file_type = ufs_file_type(mode) or UFS_IFREG
     permissions = mode & ~UFS_IFMT
@@ -2069,15 +2145,19 @@ def create_ufs_special_file(
     uid: int = 0,
     gid: int = 0,
     timestamp: int = 0,
+    parent_inode_number: int | None = None,
     recompute_summary: bool = True,
 ) -> dict[str, int | str]:
     if file_type not in {UFS_IFBLK, UFS_IFCHR}:
         raise SystemExit(f'error: unsupported UFS special file type {file_type:o}')
     if major < 0 or minor < 0:
         raise SystemExit('error: UFS special-device major and minor numbers must be non-negative')
-    if resolve_ufs_path(image, filesystem, target_path) is not None:
-        raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
-    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_parent(image, filesystem, target_path)
+    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_creation_parent(
+        image,
+        filesystem,
+        target_path,
+        parent_inode_number=parent_inode_number,
+    )
     new_inode_number = allocate_ufs_inode(image, filesystem, preferred_inode=parent_inode_number)
     permissions = mode & ~UFS_IFMT
     expanded_device = (major << 18) | minor
@@ -2114,11 +2194,15 @@ def make_ufs_directory(
     gid: int = 0,
     timestamp: int = 0,
     *,
+    parent_inode_number: int | None = None,
     recompute_summary: bool = True,
 ) -> dict[str, int | str]:
-    if resolve_ufs_path(image, filesystem, target_path) is not None:
-        raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
-    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_parent(image, filesystem, target_path)
+    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_creation_parent(
+        image,
+        filesystem,
+        target_path,
+        parent_inode_number=parent_inode_number,
+    )
     new_inode_number = allocate_ufs_inode(image, filesystem, preferred_inode=parent_inode_number, directory=True)
     permissions = mode & ~UFS_IFMT
     initialize_ufs_inode(image, filesystem, new_inode_number, UFS_IFDIR | permissions, uid=uid, gid=gid, nlink=2, timestamp=timestamp)
@@ -2268,9 +2352,7 @@ def link_ufs_path(image: bytearray, filesystem: FilesystemCandidate, source_path
     source_inode_number, source_inode = resolved_source
     if ufs_is_directory(source_inode):
         raise SystemExit(f'error: refusing to create a hard link to directory {source_path}')
-    if resolve_ufs_path(image, filesystem, target_path) is not None:
-        raise SystemExit(f'error: target path {target_path} already exists inside the ufs filesystem')
-    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_parent(image, filesystem, target_path)
+    _, entry_name, parent_inode_number, parent_inode = resolve_ufs_creation_parent(image, filesystem, target_path)
     add_ufs_directory_entry(image, filesystem, parent_inode_number, parent_inode, entry_name, source_inode_number)
     write_ufs_inode_nlink(image, filesystem, source_inode_number, int(source_inode['nlink']) + 1)
     return {'operation': 'link', 'source_path': source_path, 'target_path': target_path, 'inode': source_inode_number}
@@ -2286,6 +2368,7 @@ def symlink_ufs_path(
     gid: int = 0,
     timestamp: int = 0,
     *,
+    parent_inode_number: int | None = None,
     recompute_summary: bool = True,
 ) -> dict[str, int | str]:
     return create_ufs_file(
@@ -2297,6 +2380,7 @@ def symlink_ufs_path(
         uid=uid,
         gid=gid,
         timestamp=timestamp,
+        parent_inode_number=parent_inode_number,
         recompute_summary=recompute_summary,
     )
 
