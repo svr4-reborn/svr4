@@ -170,7 +170,7 @@ If you are implementing a wrapper, the usual path is:
 | 118 | `fpathconf` | 2 | `fpathconf` | `int fd, int name` | queried value in `rvp->r_val1` | Queries per-descriptor path configuration limits. | `uts/i386/fs/vncalls.c`. |
 | 119 | `vfork` | 0 | `vfork` | none | parent/child split like fork variant | Creates a child with `vfork` semantics. | `uts/i386/os/fork.c`. |
 
-## Syscalls 120-141
+## Syscalls 120-144
 
 | No. | Public name | Argc | Handler | Arguments | Returns | What it does | Source note |
 |---:|---|---:|---|---|---|---|---|
@@ -196,6 +196,9 @@ If you are implementing a wrapper, the usual path is:
 | 139 | `systeminfo` | 3 | `systeminfo` | `int cmd, char *buf, long count` | copied length / status | Gets system information strings or values selected by command. | `uts/i386/os/scalls.c`. |
 | 140 | reserved | 0 | `nosys` | none | `ENOSYS` path | Reserved slot. | `uts/i386/os/sysent.c`. |
 | 141 | `seteuid` | 1 | `seteuid` | `uid_t euid` | status only | Sets the effective user ID. | `uts/i386/os/scalls.c`. |
+| 142 | `getresuid` | 3 | `getresuid` | `uid_t *ruid, uid_t *euid, uid_t *suid` | status + copyout | Returns the real, effective, and saved user IDs through three user pointers. | `uts/i386/os/scalls.c`. |
+| 143 | `getresgid` | 3 | `getresgid` | `gid_t *rgid, gid_t *egid, gid_t *sgid` | status + copyout | Returns the real, effective, and saved group IDs through three user pointers. | `uts/i386/os/scalls.c`. |
+| 144 | `ppoll` | 4 | `ppoll` | `struct pollfd *fds, unsigned long nfds, timestruc_t *tsp, sigset_t *sigmask` | ready count in `rvp->r_val1` | Polls descriptors with an optional temporary signal mask and a `timestruc_t` timeout. | `uts/i386/fs/vncalls.c`. |
 
 ## Multiplexed and Family Syscalls
 
