@@ -18,8 +18,8 @@ Only two block drivers are configured in the default AT386 kernel metadata.
 
 | Driver | Major | Units | Handler | Mask | Type | Static node metadata |
 | --- | --- | --- | --- | --- | --- | --- |
-| `hd` | `0-0` | `2` | `hd` | `Iocrwiz` | `iHrobcf` | None staged in `master.d`; `sassign` points `root`, `swap`, `dump`, and `pipe` at `hd` minors. |
-| `fd` | `1-1` | `1` | `fd` | `Iocrwi` | `iHrbcf` | None staged in `master.d`. |
+| [`hd`](drivers/hd.md) | `0-0` | `2` | `hd` | `Iocrwiz` | `iHrobcf` | None staged in `master.d`; `sassign` points `root`, `swap`, `dump`, and `pipe` at `hd` minors. |
+| [`fd`](drivers/fd.md) | `1-1` | `1` | `fd` | `Iocrwi` | `iHrbcf` | None staged in `master.d`. |
 
 Both of those drivers are also configured as character devices, so they appear in the next table as well.
 
@@ -29,35 +29,35 @@ Both of those drivers are also configured as character devices, so they appear i
 
 | Driver | Major | Units | Handler | Mask | Type | Static node metadata |
 | --- | --- | --- | --- | --- | --- | --- |
-| `hd` | `0-0` | `2` | `hd` | `Iocrwiz` | `iHrobcf` | No staged `node` file. |
-| `fd` | `1-1` | `1` | `fd` | `Iocrwi` | `iHrbcf` | No staged `node` file. |
-| `mem` | `2-2` | `1` | `mm` | `rwociSM` | `irscof` | No staged `node` file. |
-| `asy` | `3-3` | `6` | `asy` | `Ioc` | `iHcSf` | `asy tty00 c 0`; `asy term/00 c 0`; `asy tty00s c 0` |
-| `lp` | `7-7` | `1` | `lp` | `Ioc` | `iHcSf` | `lp lp0 c 0`; `lp lp c 0`; `lp lp1 c 1` |
-| `rtc` | `8-8` | `1` | `rtc` | `Iocrwi` | `iHcorsf` | No staged `node` file. |
-| `cram` | `18-18` | `1` | `cmos` | `ocrwi` | `icorf` | No staged `node` file. |
-| `kdvm` | `20-20` | `1` | `kdvm_` | `oci` | `icorf` | No staged `node` file. |
-| `gvid` | `29-29` | `1` | `gvid` | `ocrwi` | `icofr` | No staged `node` file. |
-| `kd` | `30-30` | `2` | `kd` | `Is` | `iHfSrc` | No staged `node` file. |
+| [`hd`](drivers/hd.md) | `0-0` | `2` | `hd` | `Iocrwiz` | `iHrobcf` | No staged `node` file. |
+| [`fd`](drivers/fd.md) | `1-1` | `1` | `fd` | `Iocrwi` | `iHrbcf` | No staged `node` file. |
+| [`mem`](drivers/mem.md) | `2-2` | `1` | `mm` | `rwociSM` | `irscof` | No staged `node` file. |
+| [`asy`](drivers/asy.md) | `3-3` | `6` | `asy` | `Ioc` | `iHcSf` | `asy tty00 c 0`; `asy term/00 c 0`; `asy tty00s c 0` |
+| [`lp`](drivers/lp.md) | `7-7` | `1` | `lp` | `Ioc` | `iHcSf` | `lp lp0 c 0`; `lp lp c 0`; `lp lp1 c 1` |
+| [`rtc`](drivers/rtc.md) | `8-8` | `1` | `rtc` | `Iocrwi` | `iHcorsf` | No staged `node` file. |
+| [`cram`](drivers/cram.md) | `18-18` | `1` | `cmos` | `ocrwi` | `icorf` | No staged `node` file. |
+| [`kdvm`](drivers/kdvm.md) | `20-20` | `1` | `kdvm_` | `oci` | `icorf` | No staged `node` file. |
+| [`gvid`](drivers/gvid.md) | `29-29` | `1` | `gvid` | `ocrwi` | `icofr` | No staged `node` file. |
+| [`kd`](drivers/kd.md) | `30-30` | `2` | `kd` | `Is` | `iHfSrc` | No staged `node` file. |
 
 ### Pseudo Devices, TTY Plumbing, And Administrative Interfaces
 
 | Driver | Major | Units | Handler | Mask | Type | Static node metadata |
 | --- | --- | --- | --- | --- | --- | --- |
-| `clone` | `4-4` | `1` | `cln` | `-` | `Sciof` | See the clone-backed endpoint table below. |
-| `cmux` | `5-5` | `1` | `cmux` | `s` | `ifrSc` | No staged `node` file. |
-| `prf` | `6-6` | `1` | `prf` | `rwi` | `icof` | `prf prf c 0 0 3 644` |
-| `log` | `9-9` | `1` | `log` | `-` | `fScio` | `log log c 5 0 0 444`; `log conslog c 0 0 0 222` |
-| `ptm` | `11-11` | `16` | `ptm` | `-` | `Scio` | No staged `node` file. |
-| `xt` | `13-13` | `1` | `xt` | `Iocrwi` | `icor` | No staged `node` file. |
-| `sxt` | `14-14` | `1` | `sxt` | `ocrwi` | `irco` | No staged `node` file. |
-| `gentty` | `16-16` | `1` | `sy` | `orwi` | `icorf` | No staged `node` file. |
-| `osm` | `17-17` | `1` | `osm` | `orw` | `irco` | No staged `node` file. |
-| `sysmsg` | `19-19` | `1` | `smsg` | `owi` | `irco` | No staged `node` file. |
-| `sad` | `25-25` | `1` | `sad` | `I` | `Scfior` | No staged `node` file. |
-| `nxt` | `33-33` | `1` | `nxt` | `oc` | `icSr` | No staged `node` file. |
-| `nsxt` | `34-34` | `1` | `nsxt` | `oc` | `icSr` | No staged `node` file. |
-| `pts` | `35-35` | `1` | `pts` | `-` | `Scio` | No staged `node` file. |
+| [`clone`](drivers/clone.md) | `4-4` | `1` | `cln` | `-` | `Sciof` | See the clone-backed endpoint table below. |
+| [`cmux`](drivers/cmux.md) | `5-5` | `1` | `cmux` | `s` | `ifrSc` | No staged `node` file. |
+| [`prf`](drivers/prf.md) | `6-6` | `1` | `prf` | `rwi` | `icof` | `prf prf c 0 0 3 644` |
+| [`log`](drivers/log.md) | `9-9` | `1` | `log` | `-` | `fScio` | `log log c 5 0 0 444`; `log conslog c 0 0 0 222` |
+| [`ptm`](drivers/ptm.md) | `11-11` | `16` | `ptm` | `-` | `Scio` | No staged `node` file. |
+| [`xt`](drivers/xt.md) | `13-13` | `1` | `xt` | `Iocrwi` | `icor` | No staged `node` file. |
+| [`sxt`](drivers/sxt.md) | `14-14` | `1` | `sxt` | `ocrwi` | `irco` | No staged `node` file. |
+| [`gentty`](drivers/gentty.md) | `16-16` | `1` | `sy` | `orwi` | `icorf` | No staged `node` file. |
+| [`osm`](drivers/osm.md) | `17-17` | `1` | `osm` | `orw` | `irco` | No staged `node` file. |
+| [`sysmsg`](drivers/sysmsg.md) | `19-19` | `1` | `smsg` | `owi` | `irco` | No staged `node` file. |
+| [`sad`](drivers/sad.md) | `25-25` | `1` | `sad` | `I` | `Scfior` | No staged `node` file. |
+| [`nxt`](drivers/nxt.md) | `33-33` | `1` | `nxt` | `oc` | `icSr` | No staged `node` file. |
+| [`nsxt`](drivers/nsxt.md) | `34-34` | `1` | `nsxt` | `oc` | `icSr` | No staged `node` file. |
+| [`pts`](drivers/pts.md) | `35-35` | `1` | `pts` | `-` | `Scio` | No staged `node` file. |
 
 ## Clone-Backed Character Endpoints
 
@@ -65,16 +65,16 @@ Several user-visible endpoints are not separate character-device majors. Instead
 
 | Endpoint Metadata | Representative staged records | Notes |
 | --- | --- | --- |
-| `arp` | `clone arp c arp` | Clone-backed network endpoint. |
-| `icmp` | `clone icmp c icmp` | Clone-backed network endpoint. |
-| `ip` | `clone ip c ip` | Clone-backed network endpoint. |
-| `llcloop` | `clone loop c llcloop` | Clone-backed loopback/LLC endpoint metadata. |
-| `rawip` | `clone rawip c rawip` | Clone-backed raw IP endpoint. |
-| `ticlts` | `clone ticlts c ticlts` | Clone-backed TLI endpoint. |
-| `ticots` | `clone ticots c ticots` | Clone-backed TLI endpoint. |
-| `ticotsor` | `clone ticotsord c ticotsor` | Clone-backed TLI orderly-release endpoint. |
-| `udp` | `clone udp c udp` | Clone-backed UDP endpoint. |
-| `tcp` | `clone tcp c tcp`; `tcp inet/tcp000 c 000`; `tcp inet/tcp001 c 001` | Clone-backed TCP endpoint plus a bank of predeclared `inet/tcp*` names. |
+| [`arp`](drivers/arp.md) | `clone arp c arp` | Clone-backed network endpoint. |
+| [`icmp`](drivers/icmp.md) | `clone icmp c icmp` | Clone-backed network endpoint. |
+| [`ip`](drivers/ip.md) | `clone ip c ip` | Clone-backed network endpoint. |
+| [`llcloop`](drivers/llcloop.md) | `clone loop c llcloop` | Clone-backed loopback/LLC endpoint metadata. |
+| [`rawip`](drivers/rawip.md) | `clone rawip c rawip` | Clone-backed raw IP endpoint. |
+| [`ticlts`](drivers/ticlts.md) | `clone ticlts c ticlts` | Clone-backed TLI endpoint. |
+| [`ticots`](drivers/ticots.md) | `clone ticots c ticots` | Clone-backed TLI endpoint. |
+| [`ticotsor`](drivers/ticotsor.md) | `clone ticotsord c ticotsor` | Clone-backed TLI orderly-release endpoint. |
+| [`udp`](drivers/udp.md) | `clone udp c udp` | Clone-backed UDP endpoint. |
+| [`tcp`](drivers/tcp.md) | `clone tcp c tcp`; `tcp inet/tcp000 c 000`; `tcp inet/tcp001 c 001` | Clone-backed TCP endpoint plus a bank of predeclared `inet/tcp*` names. |
 
 Those names matter even though they do not introduce new majors. If a userspace ABI relies on a specific `/dev` path, the `node` file is the right place to document or preserve it.
 
@@ -84,12 +84,12 @@ The default AT386 configuration also stages several STREAMS modules that do not 
 
 | Module | Handler | Mask | Type |
 | --- | --- | --- | --- |
-| `ansi` | `ansi` | `-` | `iSf` |
-| `char` | `char` | `-` | `iSf` |
-| `connld` | `conn` | `-` | `Simo` |
-| `ldterm` | `ldtr` | `oci` | `iSf` |
-| `pipemod` | `pipe` | `-` | `Smio` |
-| `ttcompat` | `ttco` | `-` | `Smio` |
+| [`ansi`](drivers/ansi.md) | `ansi` | `-` | `iSf` |
+| [`char`](drivers/char.md) | `char` | `-` | `iSf` |
+| [`connld`](drivers/connld.md) | `conn` | `-` | `Simo` |
+| [`ldterm`](drivers/ldterm.md) | `ldtr` | `oci` | `iSf` |
+| [`pipemod`](drivers/pipemod.md) | `pipe` | `-` | `Smio` |
+| [`ttcompat`](drivers/ttcompat.md) | `ttco` | `-` | `Smio` |
 
 These modules matter for terminal, pipe, and STREAMS plumbing, but they are not directly opened through their own device majors in the way that `asy`, `lp`, `ptm`, or `clone` are.
 
@@ -98,3 +98,5 @@ These modules matter for terminal, pipe, and STREAMS plumbing, but they are not 
 - This page reflects the default full AT386 configuration. The smaller boot-floppy profile excludes many of these drivers.
 - The source tree contains additional driver code under `uts/add-ons/`, but those add-ons are not part of the default generated configuration tables yet.
 - An empty `Static node metadata` field does not mean the driver is unusable; it only means this `master.d` metadata does not stage a `node` file for it.
+
+For individual driver notes, see the pages under [drivers/](drivers/index.md).

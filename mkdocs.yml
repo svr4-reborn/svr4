@@ -25,6 +25,52 @@ nav:
   - Kernel Devices:
       - Driver Model: kernel-drivers.md
       - Device Catalog: kernel-device-catalog.md
+      - Per-Driver Notes:
+          - Overview: drivers/index.md
+          - Hardware And Console:
+              - Hard Disk: drivers/hd.md
+              - Floppy Disk: drivers/fd.md
+              - Memory Special Files: drivers/mem.md
+              - CMOS RAM: drivers/cram.md
+              - Serial: drivers/asy.md
+              - Line Printer: drivers/lp.md
+              - Real-Time Clock: drivers/rtc.md
+              - Keyboard Display: drivers/kd.md
+              - KD Video Mapper: drivers/kdvm.md
+              - Generic Video: drivers/gvid.md
+          - Pseudo Devices And Plumbing:
+              - Clone STREAMS: drivers/clone.md
+              - Channel Multiplexer: drivers/cmux.md
+              - Kernel Profiler: drivers/prf.md
+              - STREAMS Log: drivers/log.md
+              - PTY Master: drivers/ptm.md
+              - PTY Slave: drivers/pts.md
+              - XT Protocol: drivers/xt.md
+              - SXT Shell Layers: drivers/sxt.md
+              - Generic TTY: drivers/gentty.md
+              - OS Messages: drivers/osm.md
+              - System Messages: drivers/sysmsg.md
+              - STREAMS Admin: drivers/sad.md
+              - NXT Terminal: drivers/nxt.md
+              - NSXT Multiplexor: drivers/nsxt.md
+          - STREAMS Modules:
+              - ANSI: drivers/ansi.md
+              - Char Translation: drivers/char.md
+              - Connld: drivers/connld.md
+              - Ldterm: drivers/ldterm.md
+              - Pipemod: drivers/pipemod.md
+              - Ttcompat: drivers/ttcompat.md
+          - Network And TLI Endpoints:
+              - ARP: drivers/arp.md
+              - ICMP: drivers/icmp.md
+              - IP: drivers/ip.md
+              - LLC Loopback: drivers/llcloop.md
+              - Raw IP: drivers/rawip.md
+              - TCP: drivers/tcp.md
+              - UDP: drivers/udp.md
+              - TICLTS: drivers/ticlts.md
+              - TICOTS: drivers/ticots.md
+              - TICOTSOR: drivers/ticotsor.md
   - Syscalls:
       - Reference: syscalls.md
       - Porting Guide: syscall-porting-guide.md

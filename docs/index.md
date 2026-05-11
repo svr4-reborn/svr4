@@ -10,6 +10,7 @@ This site collects working notes for the SVR4 kernel tree, with an emphasis on i
 - [Multiplexed Syscall Families](syscall-families.md): deeper breakdown of the syscall families that hide multiple operations behind one entry number.
 - [Kernel Device Drivers](kernel-drivers.md): how the modern build stages `master.d` metadata, generates switch tables, and how to add new drivers.
 - [Block And Character Device Catalog](kernel-device-catalog.md): inventory of the default AT386 block devices, character devices, clone-backed endpoints, and STREAMS-only modules.
+- [Per-Driver Notes](drivers/index.md): focused notes for the main configured AT386 drivers under `docs/drivers/`.
 - [Boot Floppy Tooling](boot-floppy-tooling.md): notes on the current boot-media tooling.
 - [Bringup Debug Notes](bringup-debug-notes-2026-05-06.md): running notes from kernel bringup and debugging.
 

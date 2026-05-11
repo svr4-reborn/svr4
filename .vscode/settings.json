@@ -3,6 +3,14 @@
         "/^\\.\\./jinx build mlibc$/": {
             "approve": true,
             "matchCommandLine": true
+        },
+        "/^make build-uts$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^make build-mlibc$/": {
+            "approve": true,
+            "matchCommandLine": true
         }
     }
 }

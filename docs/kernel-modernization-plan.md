@@ -43,6 +43,8 @@ Scope:
 Tooling:
 
 - Use the pilot rewriter at `uts/tools/ansi_c_rewrite.py`.
+- Use the checked-in workflow helper at `uts/tools/legacy_c_pipeline.py` for repeatable single-file experiments.
+- Use checked-in Coccinelle patches under `uts/tools/cocci/` for narrow structural rewrites after normalization.
 - Run it slice-by-slice, writing to a temporary file first.
 
 Gate for each touched file:
@@ -60,6 +62,26 @@ cd uts/i386/os
 clang -std=gnu89 -fcommon -fno-builtin -O2 -m32 -I.. -D_KERNEL -DAT386 -DWEITEK \
   -Wold-style-definition -Wstrict-prototypes -Wimplicit-int -fsyntax-only /tmp/scalls.ansi.c
 ```
+
+Equivalent staged helper workflow:
+
+```bash
+python uts/tools/legacy_c_pipeline.py uts/i386/os/scalls.c --output /tmp/scalls.pipeline.c
+```
+
+Optional semantic patch step:
+
+```bash
+python uts/tools/legacy_c_pipeline.py uts/i386/os/scalls.c \
+  --cocci uts/tools/cocci/assignment_in_if.cocci \
+  --output /tmp/scalls.pipeline.c
+```
+
+Notes:
+
+- `legacy_c_pipeline.py` does not depend on `compile_commands.json`.
+- By default, its `clang -fsyntax-only` and `clang-tidy` stages are report-only so the workflow can finish even when legacy code still has real diagnostics.
+- Use `--strict-syntax` and `--strict-tidy` when a slice is ready to become a gating step.
 
 Pilot result on `scalls.c`:
 
