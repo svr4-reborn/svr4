@@ -16,7 +16,8 @@ configure() {
         -Dno_headers=true \
         -Ddefault_library=both \
         -Dlibgcc_dependency=true \
-        -Duse_freestnd_hdrs=enabled
+        -Duse_freestnd_hdrs=enabled \
+        -Dbuild_tests=true
 }
 
 build() {
@@ -25,4 +26,12 @@ build() {
 
 package() {
     DESTDIR="${dest_dir}" ninja install
+
+    # Copy over the tests as well, into /usr/share/mlibc-tests.
+    mkdir -p "${dest_dir}/usr/share/mlibc-tests" \
+        "${dest_dir}/usr/bin"
+    find tests -maxdepth 1 -type f -executable -not -name 'host-*' -exec sh -c 'cp "$0" "${1}/$(basename "$0")"' {} "${dest_dir}/usr/share/mlibc-tests" \;
+
+    # Copy the test runner over as well.
+    cp -v "${base_dir}/extras/mlibc/run_tests.sh" "${dest_dir}/usr/bin/mlibc-run-tests"
 }

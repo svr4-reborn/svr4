@@ -1,0 +1,125 @@
+diff --git openssl-clean/Configurations/10-main.conf openssl-workdir/Configurations/10-main.conf
+index 7e93968..5a2b7bf 100644
+--- openssl-clean/Configurations/10-main.conf
++++ openssl-workdir/Configurations/10-main.conf
+@@ -1010,6 +1010,43 @@ my %targets = (
+         ranlib           => "true",
+     },
+ 
++#### SVR4 reborn
++
++    "svr4-reborn-generic" => {
++        inherit_from     => [ "BASE_unix" ],
++        CC               => "gcc",
++        CFLAGS           => picker(default => "-Wall",
++                         debug   => "-O0 -g",
++                         release => "-O3"),
++        CXXFLAGS         => picker(default => "-Wall",
++                         debug   => "-O0 -g",
++                         release => "-O3"),
++        cflags           => threads("-pthread"),
++        cxxflags         => combine("-std=c++11", threads("-pthread")),
++        lib_cppflags     => combine("-DOPENSSL_USE_NODELETE", "-DL_ENDIAN"),
++        bn_ops           => "BN_LLONG RC4_CHAR",
++        thread_scheme    => "pthreads",
++        dso_scheme       => "dlfcn",
++        shared_target    => "linux-shared",
++        shared_cflag     => "-fPIC",
++        shared_ldflag    => sub { $disabled{pinshared} ? () : "-Wl,-znodelete" },
++        shared_extension => ".so.\$(SHLIB_VERSION_NUMBER)",
++    },
++
++    "i686-svr4-mlibc" => {
++        inherit_from     => [ "svr4-reborn-generic" ],
++        CFLAGS           => add(picker(release => "-fomit-frame-pointer")),
++        lib_cppflags     => add("-DL_ENDIAN"),
++        bn_ops           => "BN_LLONG",
++        asm_arch         => 'x86',
++        perlasm_scheme   => "elf",
++
++        # Configure doesn't want to play nice and passes "--cross-compile-suffix"
++        # on to the GCC invocation
++        CC               => "i686-svr4-mlibc-gcc",
++        CXX              => "i686-svr4-mlibc-g++",
++    },
++
+ #### *BSD
+     "BSD-generic32" => {
+         # As for thread cflag. Idea is to maintain "collective" set of
+diff --git openssl-clean/apps/speed.c openssl-workdir/apps/speed.c
+index 5f692f4..7b15d2a 100644
+--- openssl-clean/apps/speed.c
++++ openssl-workdir/apps/speed.c
+@@ -92,6 +92,8 @@ BOOL
+ #define NO_FORK
+ #endif
+ 
++#include <sys/select.h>
++
+ #define MAX_MISALIGNMENT 63
+ #define MAX_ECDH_SIZE 256
+ #define MISALIGN 64
+diff --git openssl-clean/crypto/conf/conf_def.c openssl-workdir/crypto/conf/conf_def.c
+index e41fdbe..7eee36f 100644
+--- openssl-clean/crypto/conf/conf_def.c
++++ openssl-workdir/crypto/conf/conf_def.c
+@@ -11,6 +11,7 @@
+ 
+ #include <stdio.h>
+ #include <string.h>
++#include <strings.h>
+ #include "internal/e_os.h" /* struct stat */
+ #ifdef __TANDEM
+ #include <sys/types.h> /* needed for stat.h */
+diff --git openssl-clean/test/bntest.c openssl-workdir/test/bntest.c
+index aeba02d..641dc85 100644
+--- openssl-clean/test/bntest.c
++++ openssl-workdir/test/bntest.c
+@@ -10,7 +10,7 @@
+ #include <errno.h>
+ #include <stdio.h>
+ #include <string.h>
+-#ifdef __TANDEM
++#if defined(__TANDEM) || defined(__svr4_reborn__)
+ #include <strings.h> /* strcasecmp */
+ #endif
+ #include <ctype.h>
+diff --git openssl-clean/test/helpers/ssl_test_ctx.c openssl-workdir/test/helpers/ssl_test_ctx.c
+index 98b3ff6..514e63a 100644
+--- openssl-clean/test/helpers/ssl_test_ctx.c
++++ openssl-workdir/test/helpers/ssl_test_ctx.c
+@@ -13,6 +13,7 @@
+ #define OPENSSL_SUPPRESS_DEPRECATED
+ 
+ #include <string.h>
++#include <strings.h>
+ 
+ #include <openssl/e_os2.h>
+ #include <openssl/crypto.h>
+diff --git openssl-clean/test/rsa_complex.c openssl-workdir/test/rsa_complex.c
+index 3e930f3..50039c6 100644
+--- openssl-clean/test/rsa_complex.c
++++ openssl-workdir/test/rsa_complex.c
+@@ -18,7 +18,9 @@
+ #if !defined(__DJGPP__)
+ #if defined(__STDC_VERSION__)
+ #if __STDC_VERSION__ >= 199901L
+-#include <complex.h>
++  #if !defined(__svr4_reborn__)
++    #include <complex.h>
++  #endif
+ #endif
+ #endif
+ #include <openssl/rsa.h>
+diff --git openssl-clean/test/v3nametest.c openssl-workdir/test/v3nametest.c
+index c73067d..992882c 100644
+--- openssl-clean/test/v3nametest.c
++++ openssl-workdir/test/v3nametest.c
+@@ -8,6 +8,7 @@
+  */
+ 
+ #include <string.h>
++#include <strings.h>
+ 
+ #include <openssl/e_os2.h>
+ #include <openssl/x509.h>
