@@ -43,6 +43,10 @@ JINX_ARCH="i686"      # Defaults to your local systems architecture
 The kernel will report itself as `svr4` rather than `sysv4` or anything. This is partially by mistake - I set my brain on it quite hard, but also ended up helping with some GNU ports that specifically check against a list of targets they no longer support (looking at you, binutils :3), and `svr4` passes all those, rather than getting caught by it.
 This does mean we won't get picked up as UNIX by things that do check, but oh well.
 
+# Kernel ANSI-fication
+
+Generally speaking, files should be ANSI-fied when non-super-small changes are made to a file. With time, the entire kernel should thus be ANSIfied.
+
 # Documentation
 
 Still need to work on that. What little exists right now is under `docs/`, beware of the Clanker writing style though.
