@@ -11,6 +11,7 @@ from .ufs_lowlevel import ImageBuffer, MAXCPG, MAXFRAG, MAXIPG, NBBY, NRPOS, UFS
 
 _UFS_CG_BLOCK_ALLOCATION_HINTS: dict[tuple[int, int, int, int], int] = {}
 _UFS_METADATA_NORMALIZATION_STATE: set[tuple[int, int, int]] = set()
+_UFS_POINTER_BLOCK_CACHE: dict[tuple[int, int, int, int], list[int]] = {}
 
 UFS_FS_CSTOTAL_NFFREE_OFFSET = 204
 UFS_CG_CS_NFFREE_OFFSET = 36
@@ -40,6 +41,17 @@ UFS_FS_CLEAN_OFFSET = 209
 UFS_FS_RONLY_OFFSET = 210
 
 UFS_FS_OKAY = 0x7C269D38
+
+
+def _ufs_pointer_block_cache_key(image: ImageBuffer, filesystem: FilesystemCandidate, fs_block: int) -> tuple[int, int, int, int]:
+    return (id(image), filesystem.start_offset, filesystem.super_offset, fs_block)
+
+
+def _clear_ufs_pointer_block_cache(image: ImageBuffer) -> None:
+    image_id = id(image)
+    stale_keys = [cache_key for cache_key in _UFS_POINTER_BLOCK_CACHE if cache_key[0] == image_id]
+    for cache_key in stale_keys:
+        del _UFS_POINTER_BLOCK_CACHE[cache_key]
 
 
 def detect_ufs(image: ImageBuffer) -> list[FilesystemCandidate]:
@@ -112,6 +124,18 @@ def read_ufs_inode(image: ImageBuffer, fs_start: int, fs: dict[str, Any], inode_
         'indirect_blocks': indirect_blocks,
         'blocks': u32(raw, UFS_DI_BLOCKS_OFFSET),
     }
+
+
+def _ufs_inode_block_cache_key(inode: dict[str, Any]) -> tuple[int, tuple[int, ...], tuple[int, ...]] | None:
+    direct_blocks = inode.get('direct_blocks')
+    indirect_blocks = inode.get('indirect_blocks')
+    if not isinstance(direct_blocks, list) or not isinstance(indirect_blocks, list):
+        return None
+    return (
+        int(inode['size']),
+        tuple(int(fs_block) for fs_block in direct_blocks),
+        tuple(int(fs_block) for fs_block in indirect_blocks),
+    )
 
 
 def ufs_file_type(mode: int) -> int:
@@ -191,13 +215,20 @@ def lookup_ufs_directory_entry(
     entry_name: str,
 ) -> tuple[int, dict[str, int | list[int]]] | None:
     fs = filesystem.details
-    for record in iter_ufs_inode_directory_records(image, filesystem, directory_inode):
-        if record.inode == 0 or record.name != entry_name:
-            continue
-        child_inode = read_ufs_inode(image, filesystem.start_offset, fs, record.inode)
-        if child_inode is None:
-            return None
-        return record.inode, child_inode
+    directory_size = int(directory_inode['size'])
+    if directory_size <= 0:
+        return None
+    directory_bytes = read_ufs_inode_bytes(image, filesystem, directory_inode)
+    for block_offset in range(0, directory_size, UFS_DIRBLKSIZ):
+        block_span = min(UFS_DIRBLKSIZ, directory_size - block_offset)
+        block_bytes = directory_bytes[block_offset:block_offset + block_span]
+        for record in iter_ufs_directory_records(block_bytes, block_span):
+            if record.inode == 0 or record.name != entry_name:
+                continue
+            child_inode = read_ufs_inode(image, filesystem.start_offset, fs, record.inode)
+            if child_inode is None:
+                return None
+            return record.inode, child_inode
     return None
 
 
@@ -490,15 +521,23 @@ def format_ufs_filesystem(
         tracks_per_cylinder=tracks_per_cylinder,
         sectors_per_track=sectors_per_track,
     )
+    _clear_ufs_pointer_block_cache(image)
     image[:] = formatted
     return filesystem
 
 
 def read_ufs_pointer_block(image: ImageBuffer, filesystem: FilesystemCandidate, fs_block: int) -> list[int]:
+    cache_key = _ufs_pointer_block_cache_key(image, filesystem, fs_block)
+    cached_pointers = _UFS_POINTER_BLOCK_CACHE.get(cache_key)
+    if cached_pointers is not None:
+        return cached_pointers
+
     block_offset = ufs_data_block_offset(filesystem.start_offset, filesystem.details, fs_block)
     block_size = int(filesystem.details['bsize'])
     raw = image[block_offset:block_offset + block_size]
-    return [u32(raw, index * 4) for index in range(int(filesystem.details['nindir']))]
+    pointers = [u32(raw, index * 4) for index in range(int(filesystem.details['nindir']))]
+    _UFS_POINTER_BLOCK_CACHE[cache_key] = pointers
+    return pointers
 
 
 def collect_indirect_data_blocks(
@@ -545,6 +584,11 @@ def collect_indirect_pointer_blocks(image: ImageBuffer, filesystem: FilesystemCa
 
 
 def ufs_inode_data_blocks(image: ImageBuffer, filesystem: FilesystemCandidate, inode: dict[str, int | list[int]]) -> list[int]:
+    cache_key = _ufs_inode_block_cache_key(inode)
+    cached_blocks = inode.get('_cached_data_blocks')
+    if cache_key is not None and inode.get('_cached_data_blocks_key') == cache_key and isinstance(cached_blocks, list):
+        return cached_blocks
+
     direct_blocks = inode['direct_blocks']
     indirect_blocks = inode['indirect_blocks']
     if not isinstance(direct_blocks, list) or not isinstance(indirect_blocks, list):
@@ -557,7 +601,11 @@ def ufs_inode_data_blocks(image: ImageBuffer, filesystem: FilesystemCandidate, i
             continue
         blocks.append(int(fs_block))
         if len(blocks) >= needed_blocks:
-            return blocks[:needed_blocks]
+            resolved_blocks = blocks[:needed_blocks]
+            if cache_key is not None:
+                inode['_cached_data_blocks_key'] = cache_key
+                inode['_cached_data_blocks'] = resolved_blocks
+            return resolved_blocks
     for levels, root_block in enumerate(indirect_blocks, start=1):
         blocks.extend(
             collect_indirect_data_blocks(
@@ -569,18 +617,51 @@ def ufs_inode_data_blocks(image: ImageBuffer, filesystem: FilesystemCandidate, i
             )
         )
         if len(blocks) >= needed_blocks:
-            return blocks[:needed_blocks]
-    return blocks[:needed_blocks]
+            resolved_blocks = blocks[:needed_blocks]
+            if cache_key is not None:
+                inode['_cached_data_blocks_key'] = cache_key
+                inode['_cached_data_blocks'] = resolved_blocks
+            return resolved_blocks
+    resolved_blocks = blocks[:needed_blocks]
+    if cache_key is not None:
+        inode['_cached_data_blocks_key'] = cache_key
+        inode['_cached_data_blocks'] = resolved_blocks
+    return resolved_blocks
 
 
 def ufs_inode_pointer_blocks(image: ImageBuffer, filesystem: FilesystemCandidate, inode: dict[str, int | list[int]]) -> list[int]:
+    cache_key = _ufs_inode_block_cache_key(inode)
+    cached_blocks = inode.get('_cached_pointer_blocks')
+    if cache_key is not None and inode.get('_cached_pointer_blocks_key') == cache_key and isinstance(cached_blocks, list):
+        return cached_blocks
+
     indirect_blocks = inode['indirect_blocks']
     if not isinstance(indirect_blocks, list):
         return []
     blocks: list[int] = []
     for levels, root_block in enumerate(indirect_blocks, start=1):
         blocks.extend(collect_indirect_pointer_blocks(image, filesystem, int(root_block), levels))
+    if cache_key is not None:
+        inode['_cached_pointer_blocks_key'] = cache_key
+        inode['_cached_pointer_blocks'] = blocks
     return blocks
+
+
+def read_ufs_inode_bytes(
+    image: ImageBuffer,
+    filesystem: FilesystemCandidate,
+    inode: dict[str, int | list[int]],
+) -> bytes:
+    inode_size = int(inode['size'])
+    if inode_size <= 0:
+        return b''
+    return read_ufs_data_range(
+        image,
+        filesystem,
+        ufs_inode_data_blocks(image, filesystem, inode),
+        0,
+        inode_size,
+    )
 
 
 def read_ufs_file(image: ImageBuffer, fs_start: int, fs: dict[str, Any], inode: dict[str, int | list[int]]) -> bytes:
@@ -603,9 +684,10 @@ def iter_ufs_inode_directory_records(
 ) -> list[UFSDirectoryEntry]:
     size = int(inode['size'])
     records: list[UFSDirectoryEntry] = []
+    directory_bytes = read_ufs_inode_bytes(image, filesystem, inode)
     for block_offset in range(0, size, UFS_DIRBLKSIZ):
         block_span = min(UFS_DIRBLKSIZ, size - block_offset)
-        block_bytes = read_ufs_inode_range(image, filesystem, inode, block_offset, block_span)
+        block_bytes = directory_bytes[block_offset:block_offset + block_span]
         for record in iter_ufs_directory_records(block_bytes, block_span):
             records.append(
                 UFSDirectoryEntry(
@@ -1384,10 +1466,14 @@ def free_ufs_allocation(image: bytearray, filesystem: FilesystemCandidate, fs_bl
 def write_ufs_pointer_block(image: bytearray, filesystem: FilesystemCandidate, fs_block: int, pointers: list[int]) -> None:
     block_offset = ufs_data_block_offset(filesystem.start_offset, filesystem.details, fs_block)
     block_size = int(filesystem.details['bsize'])
+    pointer_count = int(filesystem.details['nindir'])
+    normalized_pointers = [int(pointer) for pointer in pointers[:pointer_count]]
+    cached_pointers = normalized_pointers + ([0] * (pointer_count - len(normalized_pointers)))
     raw = bytearray(block_size)
-    for index, pointer in enumerate(pointers[:int(filesystem.details['nindir'])]):
+    for index, pointer in enumerate(cached_pointers):
         raw[index * 4:(index + 1) * 4] = int(pointer).to_bytes(4, 'little', signed=False)
     image[block_offset:block_offset + block_size] = raw
+    _UFS_POINTER_BLOCK_CACHE[_ufs_pointer_block_cache_key(image, filesystem, fs_block)] = cached_pointers
 
 
 def _get_ufs_pointer_block_cache_entry(
@@ -2032,9 +2118,10 @@ def add_ufs_directory_entry(
     rounded_length = ((directory_size + UFS_DIRBLKSIZ - 1) // UFS_DIRBLKSIZ) * UFS_DIRBLKSIZ
     if rounded_length == 0:
         rounded_length = UFS_DIRBLKSIZ
+    directory_bytes = read_ufs_inode_bytes(image, filesystem, directory_inode)
     for block_offset in range(0, rounded_length, UFS_DIRBLKSIZ):
         block_span = max(0, min(UFS_DIRBLKSIZ, directory_size - block_offset))
-        block_bytes = read_ufs_inode_range(image, filesystem, directory_inode, block_offset, block_span)
+        block_bytes = directory_bytes[block_offset:block_offset + block_span]
         try:
             updated_block = insert_ufs_directory_entry(block_bytes, block_span, child_inode_number, entry_name)
         except ValueError:
@@ -2053,9 +2140,10 @@ def delete_ufs_directory_entry(
     entry_name: str,
 ) -> dict[str, int | str | list[int] | None]:
     directory_size = int(directory_inode['size'])
+    directory_bytes = read_ufs_inode_bytes(image, filesystem, directory_inode)
     for block_offset in range(0, directory_size, UFS_DIRBLKSIZ):
         block_span = min(UFS_DIRBLKSIZ, directory_size - block_offset)
-        block_bytes = read_ufs_inode_range(image, filesystem, directory_inode, block_offset, block_span)
+        block_bytes = directory_bytes[block_offset:block_offset + block_span]
         try:
             updated_block = remove_ufs_directory_entry(block_bytes, block_span, entry_name)
         except ValueError:
@@ -2081,9 +2169,10 @@ def update_ufs_directory_dotdot(
     parent_inode_number: int,
 ) -> None:
     directory_size = int(directory_inode['size'])
+    directory_bytes = read_ufs_inode_bytes(image, filesystem, directory_inode)
     for block_offset in range(0, directory_size, UFS_DIRBLKSIZ):
         block_span = min(UFS_DIRBLKSIZ, directory_size - block_offset)
-        block_bytes = read_ufs_inode_range(image, filesystem, directory_inode, block_offset, block_span)
+        block_bytes = directory_bytes[block_offset:block_offset + block_span]
         try:
             updated_block = rewrite_ufs_directory_entry_inode(block_bytes, block_span, '..', parent_inode_number)
         except ValueError:

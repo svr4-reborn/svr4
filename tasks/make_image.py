@@ -1,6 +1,7 @@
 # pyright: reportMissingImports=false
 
 import argparse
+from dataclasses import dataclass
 import importlib
 import os
 import re
@@ -35,16 +36,25 @@ read_slice_bytes = _disk_inspect.read_slice_bytes
 VtocPartition = _disk_structures.VtocPartition
 HDPDLOC = _disk_structures.HDPDLOC
 format_bfs_filesystem = _fs_bfs.format_bfs_filesystem
-create_ufs_file = _fs_ufs.create_ufs_file
+allocate_ufs_inode = _fs_ufs.allocate_ufs_inode
+apply_ufs_inode_replacement = _fs_ufs.apply_ufs_inode_replacement
+build_ufs_directory_block = _fs_ufs.build_ufs_directory_block
 create_ufs_special_file = _fs_ufs.create_ufs_special_file
+encode_ufs_directory_entry = _fs_ufs.encode_ufs_directory_entry
 format_ufs_filesystem = _fs_ufs.format_ufs_filesystem
+initialize_ufs_inode = _fs_ufs.initialize_ufs_inode
+iter_ufs_directory_records = _fs_ufs.iter_ufs_directory_records
 link_ufs_path = _fs_ufs.link_ufs_path
 make_ufs_directory = _fs_ufs.make_ufs_directory
-resolve_ufs_path = _fs_ufs.resolve_ufs_path
 read_ufs_inode = _fs_ufs.read_ufs_inode
-symlink_ufs_path = _fs_ufs.symlink_ufs_path
+ufs_dirsiz = _fs_ufs.ufs_dirsiz
+write_ufs_inode_nlink = _fs_ufs.write_ufs_inode_nlink
+UFS_DIRBLKSIZ = _fs_ufs.UFS_DIRBLKSIZ
 UFS_IFBLK = _fs_ufs.UFS_IFBLK
 UFS_IFCHR = _fs_ufs.UFS_IFCHR
+UFS_IFDIR = _fs_ufs.UFS_IFDIR
+UFS_IFLNK = _fs_ufs.UFS_IFLNK
+UFS_IFREG = _fs_ufs.UFS_IFREG
 UFS_ROOT_INODE = _fs_ufs.UFS_ROOT_INODE
 recompute_ufs_summary_counts = _fs_ufs.recompute_ufs_summary_counts
 
@@ -72,6 +82,14 @@ _DEFAULT_DEVICE_ASSIGNMENTS = {
     '/dev/sysmsg': (UFS_IFCHR, 19, 0),
     '/dev/zero': (UFS_IFCHR, 2, 4),
 }
+
+
+@dataclass
+class _BulkUFSDirectoryState:
+    guest_path: str
+    inode_number: int
+    nlink: int
+    directory_bytes: bytes
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Build the hard drive image for SVR4')
@@ -260,8 +278,163 @@ def _ensure_ufs_parent_directories(image: bytearray, filesystem: Any, relative_p
                 raise
 
 
+def _join_ufs_path(parent_path: str, name: str) -> str:
+    if parent_path == '/':
+        return '/' + name
+    return parent_path + '/' + name
+
+
+def _append_bulk_directory_entry(directory_bytes: bytes, child_inode_number: int, entry_name: str) -> bytes:
+    needed_length = ufs_dirsiz(entry_name)
+    if needed_length > UFS_DIRBLKSIZ:
+        raise SystemExit(f'error: UFS path component {entry_name!r} exceeds the directory block size')
+    if not directory_bytes:
+        return encode_ufs_directory_entry(child_inode_number, entry_name, UFS_DIRBLKSIZ)
+
+    last_block_offset = max(0, len(directory_bytes) - UFS_DIRBLKSIZ)
+    last_block = directory_bytes[last_block_offset:last_block_offset + UFS_DIRBLKSIZ]
+    records = iter_ufs_directory_records(last_block, len(last_block))
+    if not records:
+        return directory_bytes + encode_ufs_directory_entry(child_inode_number, entry_name, UFS_DIRBLKSIZ)
+
+    last_record = records[-1]
+    last_record_minimal_length = ufs_dirsiz(last_record.name)
+    remaining_length = last_record.record_length - last_record_minimal_length
+    if remaining_length < needed_length:
+        return directory_bytes + encode_ufs_directory_entry(child_inode_number, entry_name, UFS_DIRBLKSIZ)
+
+    updated = bytearray(directory_bytes)
+    record_length_offset = last_block_offset + last_record.offset + 4
+    updated[record_length_offset:record_length_offset + 2] = last_record_minimal_length.to_bytes(2, 'little', signed=False)
+    entry_offset = last_block_offset + last_record.offset + last_record_minimal_length
+    updated[entry_offset:entry_offset + remaining_length] = encode_ufs_directory_entry(
+        child_inode_number,
+        entry_name,
+        remaining_length,
+    )
+    return bytes(updated)
+
+
+def _allocate_initialized_ufs_inode(
+    image: bytearray,
+    filesystem: Any,
+    parent_inode_number: int,
+    mode: int,
+    *,
+    nlink: int = 1,
+    directory: bool = False,
+) -> int:
+    inode_number = allocate_ufs_inode(
+        image,
+        filesystem,
+        preferred_inode=parent_inode_number,
+        directory=directory,
+    )
+    initialize_ufs_inode(image, filesystem, inode_number, mode, nlink=nlink)
+    return inode_number
+
+
+def _create_bulk_ufs_file(
+    image: bytearray,
+    filesystem: Any,
+    parent_state: _BulkUFSDirectoryState,
+    entry_name: str,
+    file_bytes: bytes,
+    *,
+    mode: int,
+) -> None:
+    guest_path = _join_ufs_path(parent_state.guest_path, entry_name)
+    inode_number = _allocate_initialized_ufs_inode(
+        image,
+        filesystem,
+        parent_state.inode_number,
+        UFS_IFREG | mode,
+    )
+    inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, inode_number)
+    if inode is None:
+        raise SystemExit(f'error: failed to re-read newly allocated UFS inode {inode_number}')
+    apply_ufs_inode_replacement(image, filesystem, inode_number, inode, file_bytes, target_path=guest_path)
+    parent_state.directory_bytes = _append_bulk_directory_entry(parent_state.directory_bytes, inode_number, entry_name)
+
+
+def _create_bulk_ufs_symlink(
+    image: bytearray,
+    filesystem: Any,
+    parent_state: _BulkUFSDirectoryState,
+    entry_name: str,
+    target: str,
+) -> None:
+    guest_path = _join_ufs_path(parent_state.guest_path, entry_name)
+    inode_number = _allocate_initialized_ufs_inode(
+        image,
+        filesystem,
+        parent_state.inode_number,
+        UFS_IFLNK | 0o777,
+    )
+    inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, inode_number)
+    if inode is None:
+        raise SystemExit(f'error: failed to re-read newly allocated UFS inode {inode_number}')
+    apply_ufs_inode_replacement(image, filesystem, inode_number, inode, target.encode('ascii'), target_path=guest_path)
+    parent_state.directory_bytes = _append_bulk_directory_entry(parent_state.directory_bytes, inode_number, entry_name)
+
+
+def _create_bulk_ufs_directory(
+    image: bytearray,
+    filesystem: Any,
+    parent_state: _BulkUFSDirectoryState,
+    entry_name: str,
+    *,
+    mode: int,
+) -> _BulkUFSDirectoryState:
+    guest_path = _join_ufs_path(parent_state.guest_path, entry_name)
+    inode_number = _allocate_initialized_ufs_inode(
+        image,
+        filesystem,
+        parent_state.inode_number,
+        UFS_IFDIR | mode,
+        nlink=2,
+        directory=True,
+    )
+    parent_state.nlink += 1
+    parent_state.directory_bytes = _append_bulk_directory_entry(parent_state.directory_bytes, inode_number, entry_name)
+    return _BulkUFSDirectoryState(
+        guest_path=guest_path,
+        inode_number=inode_number,
+        nlink=2,
+        directory_bytes=build_ufs_directory_block(inode_number, parent_state.inode_number),
+    )
+
+
+def _flush_bulk_ufs_directories(
+    image: bytearray,
+    filesystem: Any,
+    directory_states: dict[Path, _BulkUFSDirectoryState],
+) -> None:
+    for relative_path in sorted(directory_states, key=lambda path: (len(path.parts), path.as_posix())):
+        state = directory_states[relative_path]
+        inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, state.inode_number)
+        if inode is None:
+            raise SystemExit(f'error: failed to read directory inode {state.inode_number} for {state.guest_path}')
+        apply_ufs_inode_replacement(
+            image,
+            filesystem,
+            state.inode_number,
+            inode,
+            state.directory_bytes,
+            target_path=state.guest_path,
+        )
+        write_ufs_inode_nlink(image, filesystem, state.inode_number, state.nlink)
+
+
 def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> None:
-    directory_inode_cache: dict[Path, int] = {Path('.'): UFS_ROOT_INODE}
+    directory_states: dict[Path, _BulkUFSDirectoryState] = {
+        Path('.'): _BulkUFSDirectoryState(
+            guest_path='/',
+            inode_number=UFS_ROOT_INODE,
+            nlink=2,
+            directory_bytes=build_ufs_directory_block(UFS_ROOT_INODE, UFS_ROOT_INODE),
+        )
+    }
 
     for dirpath, dirnames, filenames in os.walk(sysroot, topdown=True, followlinks=False):
         dir_path = Path(dirpath)
@@ -269,13 +442,9 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
         dirnames.sort()
         filenames.sort()
 
-        current_inode_number = directory_inode_cache.get(relative_dir)
-        if current_inode_number is None:
-            resolved_current = resolve_ufs_path(image, filesystem, '/' + relative_dir.as_posix())
-            if resolved_current is None:
-                raise SystemExit(f'error: could not resolve populated UFS directory /{relative_dir.as_posix()}')
-            current_inode_number, _ = resolved_current
-            directory_inode_cache[relative_dir] = current_inode_number
+        current_state = directory_states.get(relative_dir)
+        if current_state is None:
+            raise SystemExit(f'error: missing bulk UFS directory state for /{relative_dir.as_posix()}')
 
         if relative_dir == Path('stand'):
             dirnames[:] = []
@@ -284,29 +453,32 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
         for directory_name in dirnames:
             relative_path = relative_dir / directory_name
             if relative_path == Path('stand'):
-                make_ufs_directory(image, filesystem, '/stand', recompute_summary=False)
+                directory_states[relative_path] = _create_bulk_ufs_directory(
+                    image,
+                    filesystem,
+                    current_state,
+                    directory_name,
+                    mode=0o755,
+                )
                 continue
             host_path = sysroot / relative_path
             if os.path.islink(host_path):
-                symlink_ufs_path(
+                _create_bulk_ufs_symlink(
                     image,
                     filesystem,
+                    current_state,
+                    directory_name,
                     os.readlink(host_path),
-                    '/' + relative_path.as_posix(),
-                    parent_inode_number=current_inode_number,
-                    recompute_summary=False,
                 )
                 continue
             mode = host_path.lstat().st_mode & 0o777
-            result = make_ufs_directory(
+            directory_states[relative_path] = _create_bulk_ufs_directory(
                 image,
                 filesystem,
-                '/' + relative_path.as_posix(),
+                current_state,
+                directory_name,
                 mode=mode or 0o755,
-                parent_inode_number=current_inode_number,
-                recompute_summary=False,
             )
-            directory_inode_cache[relative_path] = int(result['inode'])
 
         dirnames[:] = [
             directory_name
@@ -319,29 +491,28 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
             if relative_path.parts and relative_path.parts[0] == 'stand':
                 continue
             host_path = sysroot / relative_path
-            guest_path = '/' + relative_path.as_posix()
             host_stat = host_path.lstat()
             if os.path.islink(host_path):
-                symlink_ufs_path(
+                _create_bulk_ufs_symlink(
                     image,
                     filesystem,
+                    current_state,
+                    file_name,
                     os.readlink(host_path),
-                    guest_path,
-                    parent_inode_number=current_inode_number,
-                    recompute_summary=False,
                 )
                 continue
             if not host_path.is_file():
                 raise SystemExit(f'error: unsupported sysroot entry {host_path}')
-            create_ufs_file(
+            _create_bulk_ufs_file(
                 image,
                 filesystem,
-                guest_path,
+                current_state,
+                file_name,
                 host_path.read_bytes(),
                 mode=host_stat.st_mode & 0o777 or 0o644,
-                parent_inode_number=current_inode_number,
-                recompute_summary=False,
             )
+
+    _flush_bulk_ufs_directories(image, filesystem, directory_states)
 
 
 def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
