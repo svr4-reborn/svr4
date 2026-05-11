@@ -81,6 +81,7 @@ _DEFAULT_DEVICE_ASSIGNMENTS = {
     '/dev/null': (UFS_IFCHR, 2, 2),
     '/dev/sysmsg': (UFS_IFCHR, 19, 0),
     '/dev/zero': (UFS_IFCHR, 2, 4),
+    '/dev/urandom': (UFS_IFCHR, 2, 5),
 }
 
 
@@ -261,21 +262,6 @@ def _collect_boot_files(stand_dir: Path) -> tuple[list[tuple[str, bytes]], list[
 
     missing = [name for name in EXPECTED_BOOT_FILES if name not in present_names]
     return boot_files, present_names, missing
-
-
-def _ensure_ufs_parent_directories(image: bytearray, filesystem: Any, relative_path: Path) -> None:
-    if relative_path == Path('.'):
-        return
-    current = Path('/')
-    for part in relative_path.parts:
-        current /= part
-        if str(current) == '/':
-            continue
-        try:
-            make_ufs_directory(image, filesystem, current.as_posix(), recompute_summary=False)
-        except SystemExit as error:
-            if 'already exists inside the ufs filesystem' not in str(error):
-                raise
 
 
 def _join_ufs_path(parent_path: str, name: str) -> str:
@@ -556,6 +542,7 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             mem_major = int(fields[5], 0)
             assignments['/dev/null'] = (UFS_IFCHR, mem_major, 2)
             assignments['/dev/zero'] = (UFS_IFCHR, mem_major, 4)
+            assignments['/dev/urandom'] = (UFS_IFCHR, mem_major, 5)
             break
 
     cmux_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/cmux'
