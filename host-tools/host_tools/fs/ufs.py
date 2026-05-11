@@ -10,6 +10,7 @@ from .ufs_lowlevel import ImageBuffer, MAXCPG, MAXFRAG, MAXIPG, NBBY, NRPOS, UFS
 
 
 _UFS_CG_BLOCK_ALLOCATION_HINTS: dict[tuple[int, int, int, int], int] = {}
+_UFS_ALLOCATABLE_CG_BLOCK_CACHE: dict[tuple[int, int, int, int], bytearray] = {}
 _UFS_METADATA_NORMALIZATION_STATE: set[tuple[int, int, int]] = set()
 _UFS_POINTER_BLOCK_CACHE: dict[tuple[int, int, int, int], list[int]] = {}
 
@@ -52,6 +53,17 @@ def _clear_ufs_pointer_block_cache(image: ImageBuffer) -> None:
     stale_keys = [cache_key for cache_key in _UFS_POINTER_BLOCK_CACHE if cache_key[0] == image_id]
     for cache_key in stale_keys:
         del _UFS_POINTER_BLOCK_CACHE[cache_key]
+
+
+def _ufs_allocatable_cg_block_cache_key(image: ImageBuffer, filesystem: FilesystemCandidate, cg: int) -> tuple[int, int, int, int]:
+    return (id(image), filesystem.start_offset, filesystem.super_offset, cg)
+
+
+def _clear_ufs_allocatable_cg_block_cache(image: ImageBuffer) -> None:
+    image_id = id(image)
+    stale_keys = [cache_key for cache_key in _UFS_ALLOCATABLE_CG_BLOCK_CACHE if cache_key[0] == image_id]
+    for cache_key in stale_keys:
+        del _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key]
 
 
 def detect_ufs(image: ImageBuffer) -> list[FilesystemCandidate]:
@@ -521,6 +533,7 @@ def format_ufs_filesystem(
         tracks_per_cylinder=tracks_per_cylinder,
         sectors_per_track=sectors_per_track,
     )
+    _clear_ufs_allocatable_cg_block_cache(image)
     _clear_ufs_pointer_block_cache(image)
     image[:] = formatted
     return filesystem
@@ -871,6 +884,17 @@ def is_frag_free(cg_bytes: bytes, frag_index: int) -> bool:
     return bool(byte & (1 << (frag_index % NBBY)))
 
 
+def _frag_block_free_bits(cg_bytes: bytes, frag_index: int, frags_per_block: int) -> int:
+    if frags_per_block <= 0:
+        return 0
+    bit_offset = frag_index % NBBY
+    byte_offset = UFS_CG_FREE_OFFSET + (frag_index // NBBY)
+    bits_to_cover = bit_offset + frags_per_block
+    bytes_to_cover = (bits_to_cover + NBBY - 1) // NBBY
+    window = int.from_bytes(cg_bytes[byte_offset:byte_offset + bytes_to_cover], 'little', signed=False)
+    return (window >> bit_offset) & ((1 << frags_per_block) - 1)
+
+
 def set_frag_state(cg_bytes: bytearray, frag_index: int, free: bool) -> None:
     byte_offset = UFS_CG_FREE_OFFSET + (frag_index // NBBY)
     mask = 1 << (frag_index % NBBY)
@@ -889,6 +913,7 @@ def read_cg_block(image: ImageBuffer, filesystem: FilesystemCandidate, cg: int) 
 def write_cg_block(image: bytearray, filesystem: FilesystemCandidate, cg: int, cg_bytes: bytearray) -> None:
     offset = cg_block_offset(filesystem, cg)
     image[offset:offset + len(cg_bytes)] = cg_bytes
+    _UFS_ALLOCATABLE_CG_BLOCK_CACHE[_ufs_allocatable_cg_block_cache_key(image, filesystem, cg)] = cg_bytes
 
 
 def ufs_cg_data_frag_count(fs: dict[str, Any], cg: int) -> int:
@@ -943,11 +968,20 @@ def initialize_pristine_ufs_cg(image: bytearray, filesystem: FilesystemCandidate
 
 
 def read_allocatable_cg_block(image: bytearray, filesystem: FilesystemCandidate, cg: int) -> bytearray:
+    cache_key = _ufs_allocatable_cg_block_cache_key(image, filesystem, cg)
+    cached = _UFS_ALLOCATABLE_CG_BLOCK_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
     cg_bytes = read_cg_block(image, filesystem, cg)
     if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) == UFS_CG_MAGIC:
+        _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key] = cg_bytes
         return cg_bytes
     if _looks_like_pristine_ufs_cg(cg_bytes):
-        return initialize_pristine_ufs_cg(image, filesystem, cg)
+        initialized = initialize_pristine_ufs_cg(image, filesystem, cg)
+        _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key] = initialized
+        return initialized
+    _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key] = cg_bytes
     return cg_bytes
 
 
@@ -1006,7 +1040,14 @@ def _ufs_account_fragment_run(free_flags: list[bool], frsum: list[int]) -> None:
         run_length = 0
 
 
-def expected_ufs_cg_header(image: ImageBuffer, filesystem: FilesystemCandidate, cg: int, cg_bytes: bytearray | bytes) -> tuple[bytearray, tuple[int, int, int, int]]:
+def expected_ufs_cg_header(
+    image: ImageBuffer,
+    filesystem: FilesystemCandidate,
+    cg: int,
+    cg_bytes: bytearray | bytes,
+    *,
+    trust_current_inode_counts: bool = False,
+) -> tuple[bytearray, tuple[int, int, int, int]]:
     fs = filesystem.details
     ipg = int(fs['ipg'])
     ncg = int(fs['ncg'])
@@ -1026,33 +1067,38 @@ def expected_ufs_cg_header(image: ImageBuffer, filesystem: FilesystemCandidate, 
     expected[UFS_CG_NIBLK_OFFSET:UFS_CG_NIBLK_OFFSET + 2] = ipg.to_bytes(2, 'little', signed=False)
     expected[UFS_CG_NDBLK_OFFSET:UFS_CG_NDBLK_OFFSET + 4] = cg_ndblk.to_bytes(4, 'little', signed=False)
 
-    ndir = 0
-    nifree = ipg
-    if cg == 0:
-        nifree -= 2
+    if trust_current_inode_counts:
+        ndir = u32(cg_bytes, UFS_CG_CS_NDIR_OFFSET)
+        nifree = u32(cg_bytes, UFS_CG_CS_NIFREE_OFFSET)
+    else:
+        ndir = 0
+        nifree = ipg
+        if cg == 0:
+            nifree -= 2
 
-    for inode_index in range(ipg):
-        if cg == 0 and inode_index < 2:
-            continue
-        if not is_ufs_inode_used(cg_bytes, inode_index):
-            continue
-        nifree -= 1
-        inode_number = (cg * ipg) + inode_index
-        inode = read_ufs_inode(image, filesystem.start_offset, fs, inode_number)
-        if inode is not None and ufs_is_directory(inode):
-            ndir += 1
+        for inode_index in range(ipg):
+            if cg == 0 and inode_index < 2:
+                continue
+            if not is_ufs_inode_used(cg_bytes, inode_index):
+                continue
+            nifree -= 1
+            inode_number = (cg * ipg) + inode_index
+            inode = read_ufs_inode(image, filesystem.start_offset, fs, inode_number)
+            if inode is not None and ufs_is_directory(inode):
+                ndir += 1
 
     nbfree = 0
     nffree = 0
     frsum = [0] * MAXFRAG
     btot = [0] * MAXCPG
     bpos = [0] * (MAXCPG * NRPOS)
+    full_frag_mask = (1 << frags_per_block) - 1
 
     full_block_limit = cg_ndblk - frags_per_block + 1
     frag_base = 0
     while frag_base < full_block_limit:
-        free_flags = [is_frag_free(cg_bytes, frag_base + frag_offset) for frag_offset in range(frags_per_block)]
-        free_fragments = sum(1 for flag in free_flags if flag)
+        free_bits = _frag_block_free_bits(cg_bytes, frag_base, frags_per_block)
+        free_fragments = free_bits.bit_count()
         if free_fragments == frags_per_block:
             nbfree += 1
             cyl = _ufs_cbtocylno(fs, frag_base)
@@ -1062,6 +1108,7 @@ def expected_ufs_cg_header(image: ImageBuffer, filesystem: FilesystemCandidate, 
                 bpos[(cyl * NRPOS) + pos] += 1
         elif free_fragments > 0:
             nffree += free_fragments
+            free_flags = [bool(free_bits & (1 << frag_offset)) for frag_offset in range(frags_per_block)]
             _ufs_account_fragment_run(free_flags, frsum)
         frag_base += frags_per_block
 
@@ -1116,13 +1163,12 @@ def ufs_csum_offset(filesystem: FilesystemCandidate, fs: dict[str, Any], cg: int
     return filesystem.start_offset + ufs_fsbtobytes(fs, csaddr) + (cg * UFS_CSUM_SIZE)
 
 
-def _ufs_recompute_cg_summary(image: bytearray, filesystem: FilesystemCandidate, cg: int, cg_bytes: bytearray) -> tuple[int, int, int, int]:
-    expected, totals = expected_ufs_cg_header(image, filesystem, cg, cg_bytes)
-    cg_bytes[:UFS_CG_IUSED_OFFSET] = expected[:UFS_CG_IUSED_OFFSET]
-    return totals
-
-
-def recompute_ufs_summary_counts(image: bytearray, filesystem: FilesystemCandidate) -> None:
+def _write_ufs_summary_counts(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    *,
+    trust_current_inode_counts: bool,
+) -> None:
     fs = filesystem.details
     total_ndir = 0
     total_nbfree = 0
@@ -1136,7 +1182,14 @@ def recompute_ufs_summary_counts(image: bytearray, filesystem: FilesystemCandida
                 raise SystemExit(f'error: invalid cylinder group {cg} while normalizing UFS metadata')
             cg_bytes = initialize_pristine_ufs_cg(image, filesystem, cg)
 
-        ndir, nbfree, nifree, nffree = _ufs_recompute_cg_summary(image, filesystem, cg, cg_bytes)
+        expected, (ndir, nbfree, nifree, nffree) = expected_ufs_cg_header(
+            image,
+            filesystem,
+            cg,
+            cg_bytes,
+            trust_current_inode_counts=trust_current_inode_counts,
+        )
+        cg_bytes[:UFS_CG_IUSED_OFFSET] = expected[:UFS_CG_IUSED_OFFSET]
         cg_bytes[UFS_CG_CS_NDIR_OFFSET:UFS_CG_CS_NDIR_OFFSET + 4] = ndir.to_bytes(4, 'little', signed=False)
         cg_bytes[UFS_CG_CS_NBFREE_OFFSET:UFS_CG_CS_NBFREE_OFFSET + 4] = nbfree.to_bytes(4, 'little', signed=False)
         cg_bytes[UFS_CG_CS_NIFREE_OFFSET:UFS_CG_CS_NIFREE_OFFSET + 4] = nifree.to_bytes(4, 'little', signed=False)
@@ -1160,6 +1213,14 @@ def recompute_ufs_summary_counts(image: bytearray, filesystem: FilesystemCandida
     image[super_offset + UFS_FS_CSTOTAL_NBFREE_OFFSET:super_offset + UFS_FS_CSTOTAL_NBFREE_OFFSET + 4] = total_nbfree.to_bytes(4, 'little', signed=False)
     image[super_offset + UFS_FS_CSTOTAL_NIFREE_OFFSET:super_offset + UFS_FS_CSTOTAL_NIFREE_OFFSET + 4] = total_nifree.to_bytes(4, 'little', signed=False)
     image[super_offset + UFS_FS_CSTOTAL_NFFREE_OFFSET:super_offset + UFS_FS_CSTOTAL_NFFREE_OFFSET + 4] = total_nffree.to_bytes(4, 'little', signed=False)
+
+
+def recompute_ufs_summary_counts(image: bytearray, filesystem: FilesystemCandidate) -> None:
+    _write_ufs_summary_counts(image, filesystem, trust_current_inode_counts=False)
+
+
+def refresh_ufs_summary_layout(image: bytearray, filesystem: FilesystemCandidate) -> None:
+    _write_ufs_summary_counts(image, filesystem, trust_current_inode_counts=True)
 
 
 def maybe_recompute_ufs_summary_counts(
@@ -1300,6 +1361,7 @@ def allocate_ufs_block(image: bytearray, filesystem: FilesystemCandidate, inode_
     total_cg = int(fs['ncg'])
     frags_per_block = int(fs['frag'])
     block_size = int(fs['bsize'])
+    full_frag_mask = (1 << frags_per_block) - 1
     for attempt in range(total_cg):
         cg = (start_cg + attempt) % total_cg
         cg_bytes = read_allocatable_cg_block(image, filesystem, cg)
@@ -1321,17 +1383,18 @@ def allocate_ufs_block(image: bytearray, filesystem: FilesystemCandidate, inode_
         )
         for frag_range_start, frag_range_stop in ((start_frag, last_start_frag + 1), (data_start_frag, start_frag)):
             for frag_index in range(frag_range_start, frag_range_stop, frags_per_block):
-                if all(is_frag_free(cg_bytes, frag_index + frag_offset) for frag_offset in range(frags_per_block)):
-                    for frag_offset in range(frags_per_block):
-                        set_frag_state(cg_bytes, frag_index + frag_offset, free=False)
-                    adjust_cg_free_blocks(cg_bytes, -1)
-                    write_cg_block(image, filesystem, cg, cg_bytes)
-                    adjust_superblock_free_blocks(image, filesystem, -1)
-                    _set_ufs_cg_block_hint(image, filesystem, cg, cg_ndblk, frags_per_block, frag_index + frags_per_block)
-                    fs_block = ufs_cgbase(fs, cg) + frag_index
-                    block_offset = ufs_data_block_offset(filesystem.start_offset, fs, fs_block)
-                    image[block_offset:block_offset + block_size] = b'\0' * block_size
-                    return fs_block
+                if _frag_block_free_bits(cg_bytes, frag_index, frags_per_block) != full_frag_mask:
+                    continue
+                for frag_offset in range(frags_per_block):
+                    set_frag_state(cg_bytes, frag_index + frag_offset, free=False)
+                adjust_cg_free_blocks(cg_bytes, -1)
+                write_cg_block(image, filesystem, cg, cg_bytes)
+                adjust_superblock_free_blocks(image, filesystem, -1)
+                _set_ufs_cg_block_hint(image, filesystem, cg, cg_ndblk, frags_per_block, frag_index + frags_per_block)
+                fs_block = ufs_cgbase(fs, cg) + frag_index
+                block_offset = ufs_data_block_offset(filesystem.start_offset, fs, fs_block)
+                image[block_offset:block_offset + block_size] = b'\0' * block_size
+                return fs_block
     raise SystemExit('error: no free UFS blocks remain for allocation')
 
 
@@ -1345,6 +1408,7 @@ def allocate_ufs_fragments(image: bytearray, filesystem: FilesystemCandidate, in
     start_cg = ufs_itog(fs, inode_number)
     total_cg = int(fs['ncg'])
     frags_per_block = int(fs['frag'])
+    full_frag_mask = (1 << frags_per_block) - 1
     for attempt in range(total_cg):
         cg = (start_cg + attempt) % total_cg
         cg_bytes = read_allocatable_cg_block(image, filesystem, cg)
@@ -1366,28 +1430,22 @@ def allocate_ufs_fragments(image: bytearray, filesystem: FilesystemCandidate, in
         )
         for frag_range_start, frag_range_stop in ((start_frag, last_start_frag + 1), (data_start_frag, start_frag)):
             for frag_index in range(frag_range_start, frag_range_stop, frags_per_block):
-                if not all(is_frag_free(cg_bytes, frag_index + frag_offset) for frag_offset in range(frags_per_block)):
+                if _frag_block_free_bits(cg_bytes, frag_index, frags_per_block) != full_frag_mask:
                     continue
-                free_before = frags_per_block
                 for frag_offset in range(frags_needed):
                     set_frag_state(cg_bytes, frag_index + frag_offset, free=False)
-                free_after = sum(
-                    1 for frag_offset in range(frags_per_block)
-                    if is_frag_free(cg_bytes, frag_index + frag_offset)
-                )
+                free_after = frags_per_block - frags_needed
                 adjust_cg_free_blocks(cg_bytes, -1)
                 adjust_cg_free_frags(
                     cg_bytes,
-                    _ufs_partial_fragment_contribution(free_after, frags_per_block)
-                    - _ufs_partial_fragment_contribution(free_before, frags_per_block),
+                    _ufs_partial_fragment_contribution(free_after, frags_per_block),
                 )
                 write_cg_block(image, filesystem, cg, cg_bytes)
                 adjust_superblock_free_blocks(image, filesystem, -1)
                 adjust_superblock_free_frags(
                     image,
                     filesystem,
-                    _ufs_partial_fragment_contribution(free_after, frags_per_block)
-                    - _ufs_partial_fragment_contribution(free_before, frags_per_block),
+                    _ufs_partial_fragment_contribution(free_after, frags_per_block),
                 )
                 _set_ufs_cg_block_hint(image, filesystem, cg, cg_ndblk, frags_per_block, frag_index + frags_per_block)
                 fs_block = ufs_cgbase(fs, cg) + frag_index
@@ -1440,16 +1498,12 @@ def free_ufs_allocation(image: bytearray, filesystem: FilesystemCandidate, fs_bl
     if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
         raise SystemExit(f'error: invalid cylinder group {cg} while freeing UFS allocation at block {fs_block}')
     block_base = frag_index - (frag_index % frags_per_block)
-    free_before = sum(
-        1 for frag_offset in range(frags_per_block)
-        if is_frag_free(cg_bytes, block_base + frag_offset)
-    )
+    full_frag_mask = (1 << frags_per_block) - 1
+    free_before = _frag_block_free_bits(cg_bytes, block_base, frags_per_block).bit_count()
     for frag_offset in range(frags_to_free):
         set_frag_state(cg_bytes, frag_index + frag_offset, free=True)
-    free_after = sum(
-        1 for frag_offset in range(frags_per_block)
-        if is_frag_free(cg_bytes, block_base + frag_offset)
-    )
+    free_after_bits = _frag_block_free_bits(cg_bytes, block_base, frags_per_block)
+    free_after = free_after_bits.bit_count()
     frag_delta = (
         _ufs_partial_fragment_contribution(free_after, frags_per_block)
         - _ufs_partial_fragment_contribution(free_before, frags_per_block)
@@ -1457,7 +1511,7 @@ def free_ufs_allocation(image: bytearray, filesystem: FilesystemCandidate, fs_bl
     if frag_delta:
         adjust_cg_free_frags(cg_bytes, frag_delta)
         adjust_superblock_free_frags(image, filesystem, frag_delta)
-    if all(is_frag_free(cg_bytes, block_base + frag_offset) for frag_offset in range(frags_per_block)):
+    if free_after_bits == full_frag_mask:
         adjust_cg_free_blocks(cg_bytes, 1)
         adjust_superblock_free_blocks(image, filesystem, 1)
     write_cg_block(image, filesystem, cg, cg_bytes)

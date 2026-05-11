@@ -2,6 +2,7 @@ ARCH ?= i686
 BUILD_FOLDER ?= build
 SYSROOT = $(BUILD_FOLDER)/sysroot
 HDD_IMAGE = $(BUILD_FOLDER)/hdd.img
+PYTHON ?= .venv/bin/python
 
 $(BUILD_FOLDER)/.jinx-parameters:
 	@cd $(BUILD_FOLDER) && ../jinx init .. ARCH=$(ARCH)
@@ -24,7 +25,7 @@ ensure-installed:
 
 .PHONY: hdd
 hdd $(HDD_IMAGE): $(BUILD_FOLDER)/.jinx-parameters $(SYSROOT)/stand/unix $(SYSROOT)/usr/lib/libc.so ensure-installed
-	source .venv/bin/activate && python3 tasks/make_image.py \
+	$(PYTHON) tasks/make_image.py \
 		--image $(HDD_IMAGE) \
 		--sysroot $(SYSROOT)
 
