@@ -1,27 +1,28 @@
 ARCH ?= i686
-BUILD_FOLDER ?= build
+JINX ?= $(realpath jinx)
+BUILD_FOLDER ?= $(realpath ../svr4-build)
 SYSROOT = $(BUILD_FOLDER)/sysroot
 HDD_IMAGE = $(BUILD_FOLDER)/hdd.img
 PYTHON ?= .venv/bin/python
 
 $(BUILD_FOLDER)/.jinx-parameters:
-	@cd $(BUILD_FOLDER) && ../jinx init .. ARCH=$(ARCH)
+	@cd $(BUILD_FOLDER) && $(JINX) init .. ARCH=$(ARCH)
 
 
 .PHONY: build-uts
 build-uts $(SYSROOT)/stand/unix: $(BUILD_FOLDER)/.jinx-parameters
-	@cd $(BUILD_FOLDER) && ../jinx build uts
-	@cd $(BUILD_FOLDER) && ../jinx install -f sysroot uts
+	@cd $(BUILD_FOLDER) && $(JINX) build uts
+	@cd $(BUILD_FOLDER) && $(JINX) install -f $(SYSROOT) uts
 
 .PHONY: build-mlibc
 build-mlibc $(SYSROOT)/usr/lib/libc.so: $(BUILD_FOLDER)/.jinx-parameters
-	@cd $(BUILD_FOLDER) && ../jinx build mlibc
-	@cd $(BUILD_FOLDER) && ../jinx install -f sysroot mlibc
+	@cd $(BUILD_FOLDER) && $(JINX) build mlibc
+	@cd $(BUILD_FOLDER) && $(JINX) install -f $(SYSROOT) mlibc
 
 BASE_PKGS=svr4_init bash coreutils
 .PHONY: ensure-installed
 ensure-installed:
-	@cd $(BUILD_FOLDER) && ../jinx install -f sysroot $(BASE_PKGS)
+	@cd $(BUILD_FOLDER) && $(JINX) install -f $(SYSROOT) $(BASE_PKGS)
 
 .PHONY: hdd
 hdd $(HDD_IMAGE): $(BUILD_FOLDER)/.jinx-parameters $(SYSROOT)/stand/unix $(SYSROOT)/usr/lib/libc.so ensure-installed
