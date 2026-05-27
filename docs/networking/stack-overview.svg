@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 980" role="img" aria-labelledby="title desc">
+  <title id="title">SVR4 STREAMS networking stack overview</title>
+  <desc id="desc">Layered diagram showing BSD socket callers and TLI callers above sockmod and timod, then transport endpoints, the IP multiplexer, the APP and ARP boundary, and the lower DLPI provider.</desc>
+  <defs>
+    <style>
+      .title { fill: #22303a; font: 700 26px Arial, sans-serif; }
+      .section { fill: #22303a; font: 700 18px Arial, sans-serif; }
+      .label { fill: #22303a; font: 600 18px Arial, sans-serif; }
+      .small { fill: #425966; font: 500 14px Arial, sans-serif; }
+      .mono { fill: #22303a; font: 600 16px Consolas, "Liberation Mono", monospace; }
+      .edge { stroke: #5f7a88; stroke-width: 3; marker-end: url(#arrow); }
+      .guide { stroke: #5f7a88; stroke-width: 2; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+      .boundary { fill: #4b6472; font: 700 14px Arial, sans-serif; }
+    </style>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#5f7a88"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="980" fill="#f8fbfc"/>
+  <text class="title" x="550" y="48" text-anchor="middle">SVR4 STREAMS Networking Stack</text>
+  <text class="small" x="550" y="74" text-anchor="middle">Socket and TLI callers sit above STREAMS shims, transport endpoints, IP, and the DLPI link boundary.</text>
+
+  <rect x="50" y="95" width="1000" height="130" rx="18" fill="#edf4f7" stroke="#7a96a4" stroke-width="2"/>
+  <text class="section" x="80" y="125">Callers</text>
+
+  <rect x="80" y="145" width="275" height="55" rx="14" fill="#d9e9f4" stroke="#5f7a88" stroke-width="2"/>
+  <text class="label" x="218" y="167" text-anchor="middle">BSD socket callers</text>
+  <text class="small" x="218" y="186" text-anchor="middle">libsocket, socket(), bind(), listen(), accept()</text>
+
+  <rect x="412" y="145" width="275" height="55" rx="14" fill="#dbeedc" stroke="#62806b" stroke-width="2"/>
+  <text class="label" x="550" y="167" text-anchor="middle">TLI and XTI callers</text>
+  <text class="small" x="550" y="186" text-anchor="middle">t_bind(), t_connect(), t_sndudata(), t_rcvudata()</text>
+
+  <rect x="744" y="145" width="275" height="55" rx="14" fill="#f0e5cf" stroke="#9a7f42" stroke-width="2"/>
+  <text class="label" x="882" y="167" text-anchor="middle">KTLI setup helpers</text>
+  <text class="small" x="882" y="186" text-anchor="middle">t_kopen(), t_kbind(), t_kconnect()</text>
+
+  <rect x="160" y="265" width="780" height="110" rx="18" fill="#f7f1df" stroke="#a18348" stroke-width="2"/>
+  <text class="section" x="190" y="295">Compatibility shims</text>
+
+  <rect x="200" y="315" width="280" height="40" rx="10" fill="#f4d9a6" stroke="#a18348" stroke-width="2"/>
+  <text class="mono" x="340" y="340" text-anchor="middle">sockmod</text>
+
+  <rect x="620" y="315" width="280" height="40" rx="10" fill="#f4d9a6" stroke="#a18348" stroke-width="2"/>
+  <text class="mono" x="760" y="340" text-anchor="middle">timod</text>
+
+  <rect x="50" y="410" width="1000" height="180" rx="18" fill="#ecf5eb" stroke="#6f8f77" stroke-width="2"/>
+  <text class="section" x="80" y="440">Transport endpoints</text>
+  <text class="small" x="80" y="462">Clone-backed opens land here after the streamtab is selected.</text>
+
+  <rect x="90" y="490" width="180" height="70" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="180" y="518" text-anchor="middle">tcp</text>
+  <text class="small" x="180" y="540" text-anchor="middle">T_COTS_ORD, listen queues, tcpcb</text>
+
+  <rect x="310" y="490" width="180" height="70" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="400" y="518" text-anchor="middle">udp</text>
+  <text class="small" x="400" y="540" text-anchor="middle">T_CLTS, datagram send and receive</text>
+
+  <rect x="530" y="490" width="180" height="70" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="620" y="518" text-anchor="middle">rawip</text>
+  <text class="small" x="620" y="540" text-anchor="middle">T_CLTS, direct protocol payloads</text>
+
+  <rect x="750" y="490" width="180" height="70" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="840" y="518" text-anchor="middle">icmp</text>
+  <text class="small" x="840" y="540" text-anchor="middle">T_CLTS, control and error traffic</text>
+
+  <rect x="940" y="480" width="90" height="90" rx="14" fill="#ffffff" stroke="#6f8f77" stroke-width="2"/>
+  <text class="label" x="985" y="504" text-anchor="middle">State</text>
+  <text class="small" x="985" y="526" text-anchor="middle">inpcb</text>
+  <text class="small" x="985" y="546" text-anchor="middle">tcpcb</text>
+  <text class="small" x="985" y="566" text-anchor="middle">t_q0 / t_q</text>
+
+  <rect x="220" y="635" width="660" height="110" rx="18" fill="#dceaf3" stroke="#5f7a88" stroke-width="2"/>
+  <text class="section" x="250" y="665">IPv4 multiplexer</text>
+  <rect x="260" y="685" width="580" height="40" rx="10" fill="#c7deed" stroke="#5f7a88" stroke-width="2"/>
+  <text class="mono" x="550" y="710" text-anchor="middle">ip_main.c, ip_input.c, ip_output.c, ip_protox[], provider[]</text>
+
+  <rect x="260" y="785" width="580" height="70" rx="18" fill="#efe3d7" stroke="#9a6d47" stroke-width="2"/>
+  <text class="section" x="290" y="815">APP and ARP boundary</text>
+  <text class="small" x="550" y="838" text-anchor="middle">APP bridges IP to lower drivers; ARP resolves IPv4 destinations.</text>
+
+  <rect x="260" y="890" width="580" height="60" rx="18" fill="#e5e9ef" stroke="#687789" stroke-width="2"/>
+  <text class="section" x="550" y="925" text-anchor="middle">DLPI or LLC lower provider and hardware driver</text>
+
+  <line class="edge" x1="218" y1="200" x2="340" y2="315"/>
+  <line class="edge" x1="550" y1="200" x2="760" y2="315"/>
+  <line class="edge" x1="882" y1="200" x2="760" y2="315"/>
+
+  <line class="edge" x1="340" y1="355" x2="340" y2="490"/>
+  <line class="edge" x1="760" y1="355" x2="760" y2="490"/>
+  <line class="guide" x1="985" y1="480" x2="885" y2="555"/>
+
+  <line class="edge" x1="550" y1="590" x2="550" y2="635"/>
+  <line class="edge" x1="550" y1="745" x2="550" y2="785"/>
+  <line class="edge" x1="550" y1="855" x2="550" y2="890"/>
+
+  <rect x="95" y="250" width="110" height="28" rx="14" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="boundary" x="150" y="269" text-anchor="middle">socket API</text>
+
+  <rect x="492" y="250" width="116" height="28" rx="14" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="boundary" x="550" y="269" text-anchor="middle">TLI or XTI</text>
+
+  <rect x="492" y="382" width="66" height="28" rx="14" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="boundary" x="525" y="401" text-anchor="middle">TPI</text>
+
+  <rect x="492" y="602" width="66" height="28" rx="14" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="boundary" x="525" y="621" text-anchor="middle">NPI</text>
+
+  <rect x="492" y="752" width="72" height="28" rx="14" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="boundary" x="528" y="771" text-anchor="middle">DLPI</text>
+</svg>

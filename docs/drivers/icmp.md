@@ -9,10 +9,11 @@ The `icmp` endpoint is the clone-backed ICMP protocol entry point for the STREAM
 | Key source file | `uts/i386/netinet/ip_icmp.c` |
 | Access path | Clone-backed via the `clone` driver |
 | Staged node metadata | `clone icmp c icmp` |
-| Dedicated major | None; shares clone-open machinery |
+| Default generated state | Enabled in the default AT386 config; historical `sdev` record is `N` |
+| Public node major | `clone`; clone-open dispatches to the `icmp` STREAMS `cdevsw` entry |
 
 ## Current Role
 
 - Provides the ICMP-facing protocol endpoint in the network stack.
-- Uses clone-open naming rather than a dedicated switch-table major.
+- When enabled, uses clone-open public naming; the target remains the ICMP STREAMS switch-table entry.
 - Belongs to the protocol stack, not the hardware-interface layer.

@@ -26,15 +26,16 @@ The comments at the top of `clnopen()` describe the flow directly:
 5. Call the target device’s open routine with `CLONEOPEN`.
 6. Replace the caller-visible device number with the real cloned result.
 
-That behavior is why so many user-visible endpoints in this tree are declared as `clone ... c ...` in `node` metadata rather than receiving their own separate major numbers.
+That behavior is why so many user-visible endpoints in this tree are declared as `clone ... c ...` in `node` metadata: the public node opens the clone driver, and clone-open dispatches to the target STREAMS entry in `cdevsw[]` when the target is configured.
 
 ## Endpoints That Depend On It
 
-The default staged metadata uses `clone` for several network and TLI entry points, including:
+The source tree stages `clone` node metadata for several network and TLI entry points, including:
 
 - `arp`
 - `icmp`
 - `ip`
+- `llcloop`
 - `rawip`
 - `udp`
 - `tcp`
@@ -42,7 +43,7 @@ The default staged metadata uses `clone` for several network and TLI entry point
 - `ticots`
 - `ticotsor`
 
-The TCP node metadata also declares a family of `inet/tcp*` names behind the clone path.
+Their historical `sdev` records are disabled, but the default AT386 generated configuration enables the network and TLI targets explicitly. These node records document the ABI shape that clone-open uses once the corresponding target modules are present in `cdevsw[]`. The TCP node metadata also declares a family of `inet/tcp*` names behind the clone path.
 
 ## Why It Matters
 
@@ -57,6 +58,10 @@ If a path exists in `node.d` but does not behave correctly at open time, `clone.
 ## Related Files
 
 - `uts/i386/master.d/clone/mdev`
+- `uts/i386/master.d/arp/node`
+- `uts/i386/master.d/icmp/node`
+- `uts/i386/master.d/llcloop/node`
+- `uts/i386/master.d/rawip/node`
 - `uts/i386/master.d/tcp/node`
 - `uts/i386/master.d/udp/node`
 - `uts/i386/master.d/ip/node`

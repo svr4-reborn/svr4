@@ -2,7 +2,7 @@
 
 This section collects focused notes for individual drivers instead of keeping everything in the top-level kernel docs.
 
-The current coverage now matches the names that appear in the default AT386 device catalog, including hardware-facing devices, pseudo-devices, STREAMS plumbing modules, and the clone-backed network/TLI endpoints.
+The current coverage includes the active default AT386 device catalog and the source-backed networking or TLI metadata that the STREAMS networking notes depend on. Several network and TLI endpoints have historical `sdev` records set to `N`, but the default generated kernel now enables them through the modern build spec while the reduced boot-floppy profile excludes them.
 
 ## Hardware And Console
 
@@ -37,11 +37,16 @@ The current coverage now matches the names that appear in the default AT386 devi
 ## STREAMS Modules
 
 - [ANSI Parser Module](ansi.md)
+- [APP Link-Convergence Module](app.md)
 - [Character Translation Module](char.md)
 - [Connection Establishment Module](connld.md)
 - [Terminal Line Discipline Module](ldterm.md)
 - [Pipe Flush Module](pipemod.md)
+- [Socket Compatibility Module](sockmod.md)
+- [TLI Compatibility Module](timod.md)
 - [TTY Compatibility Module](ttcompat.md)
+
+The terminal and pipe modules in this section are part of the current default AT386 device catalog. `app`, `sockmod`, and `timod` are included here because the networking documentation depends on them; their historical `sdev` entries are disabled, but the default generated kernel enables them explicitly.
 
 ## Clone-Backed Network And TLI Endpoints
 
@@ -65,5 +70,5 @@ These pages are intentionally source-backed and conservative. They document what
 
 ## Coverage Limits
 
-- This section follows the current default AT386 catalog, not the entire historical tree.
+- This section follows the current default AT386 catalog plus explicitly documented source-backed networking metadata, not the entire historical tree.
 - Add-on drivers under `uts/add-ons/` still remain outside this section until they are integrated into the default modern build path.

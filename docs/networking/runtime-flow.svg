@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 860" role="img" aria-labelledby="title desc">
+  <title id="title">SVR4 STREAMS networking runtime flow</title>
+  <desc id="desc">Two-lane diagram showing outbound send flow and inbound receive flow, with a passive-open TCP listen and accept side path.</desc>
+  <defs>
+    <style>
+      .title { fill: #22303a; font: 700 26px Arial, sans-serif; }
+      .section { fill: #22303a; font: 700 20px Arial, sans-serif; }
+      .label { fill: #22303a; font: 600 18px Arial, sans-serif; }
+      .small { fill: #425966; font: 500 13px Arial, sans-serif; }
+      .mono { fill: #22303a; font: 600 15px Consolas, "Liberation Mono", monospace; }
+      .edge { stroke: #5f7a88; stroke-width: 3; marker-end: url(#arrow); }
+      .guide { stroke: #5f7a88; stroke-width: 2.5; stroke-dasharray: 9 7; marker-end: url(#arrow); }
+      .token { fill: #4b6472; font: 700 13px Arial, sans-serif; }
+    </style>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#5f7a88"/>
+    </marker>
+  </defs>
+
+  <rect width="1520" height="860" fill="#f8fbfc"/>
+  <text class="title" x="760" y="46" text-anchor="middle">SVR4 Runtime Flow</text>
+  <text class="small" x="760" y="72" text-anchor="middle">Outbound send and inbound receive stay on STREAMS queues all the way through the stack.</text>
+
+  <rect x="30" y="105" width="1460" height="180" rx="20" fill="#edf4f7" stroke="#7a96a4" stroke-width="2"/>
+  <text class="section" x="60" y="138">Outbound send path</text>
+
+  <rect x="50" y="165" width="170" height="80" rx="14" fill="#d9e9f4" stroke="#5f7a88" stroke-width="2"/>
+  <text class="label" x="135" y="195" text-anchor="middle">write(), send(),</text>
+  <text class="label" x="135" y="218" text-anchor="middle">sendto()</text>
+
+  <rect x="255" y="165" width="175" height="80" rx="14" fill="#f4d9a6" stroke="#a18348" stroke-width="2"/>
+  <text class="mono" x="342" y="195" text-anchor="middle">sockmod</text>
+  <text class="small" x="342" y="216" text-anchor="middle">or timod for TLI or XTI</text>
+
+  <rect x="465" y="165" width="200" height="80" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="565" y="193" text-anchor="middle">tcp_state()</text>
+  <text class="small" x="565" y="214" text-anchor="middle">or udp_state() validates</text>
+  <text class="small" x="565" y="232" text-anchor="middle">TPI state and queues work</text>
+
+  <rect x="700" y="165" width="200" height="80" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="800" y="193" text-anchor="middle">tcp_output()</text>
+  <text class="small" x="800" y="214" text-anchor="middle">or udp_output() builds</text>
+  <text class="small" x="800" y="232" text-anchor="middle">transport plus IPv4 headers</text>
+
+  <rect x="935" y="165" width="175" height="80" rx="14" fill="#c7deed" stroke="#5f7a88" stroke-width="2"/>
+  <text class="mono" x="1022" y="193" text-anchor="middle">ip_output()</text>
+  <text class="small" x="1022" y="214" text-anchor="middle">route, fragment, checksum,</text>
+  <text class="small" x="1022" y="232" text-anchor="middle">choose provider[] entry</text>
+
+  <rect x="1145" y="165" width="165" height="80" rx="14" fill="#efe3d7" stroke="#9a6d47" stroke-width="2"/>
+  <text class="mono" x="1227" y="193" text-anchor="middle">APP</text>
+  <text class="small" x="1227" y="214" text-anchor="middle">calls arpresolve(),</text>
+  <text class="small" x="1227" y="232" text-anchor="middle">uses ARP cache if needed</text>
+
+  <rect x="1345" y="165" width="120" height="80" rx="14" fill="#e5e9ef" stroke="#687789" stroke-width="2"/>
+  <text class="label" x="1405" y="195" text-anchor="middle">DLPI</text>
+  <text class="small" x="1405" y="216" text-anchor="middle">provider</text>
+  <text class="small" x="1405" y="234" text-anchor="middle">and wire</text>
+
+  <line class="edge" x1="220" y1="205" x2="255" y2="205"/>
+  <line class="edge" x1="430" y1="205" x2="465" y2="205"/>
+  <line class="edge" x1="665" y1="205" x2="700" y2="205"/>
+  <line class="edge" x1="900" y1="205" x2="935" y2="205"/>
+  <line class="edge" x1="1110" y1="205" x2="1145" y2="205"/>
+  <line class="edge" x1="1310" y1="205" x2="1345" y2="205"/>
+
+  <rect x="232" y="137" width="110" height="24" rx="12" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="token" x="287" y="153" text-anchor="middle">M_DATA or TPI</text>
+
+  <rect x="680" y="137" width="110" height="24" rx="12" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="token" x="735" y="153" text-anchor="middle">N_UNITDATA_REQ</text>
+
+  <rect x="1115" y="137" width="108" height="24" rx="12" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="token" x="1169" y="153" text-anchor="middle">DL_UNITDATA_REQ</text>
+
+  <rect x="30" y="345" width="1460" height="200" rx="20" fill="#eef4eb" stroke="#6f8f77" stroke-width="2"/>
+  <text class="section" x="60" y="378">Inbound receive path</text>
+
+  <rect x="50" y="410" width="120" height="82" rx="14" fill="#e5e9ef" stroke="#687789" stroke-width="2"/>
+  <text class="label" x="110" y="446" text-anchor="middle">Wire</text>
+  <text class="small" x="110" y="467" text-anchor="middle">frame arrives</text>
+
+  <rect x="205" y="410" width="170" height="82" rx="14" fill="#e5e9ef" stroke="#687789" stroke-width="2"/>
+  <text class="label" x="290" y="439" text-anchor="middle">DLPI provider</text>
+  <text class="small" x="290" y="460" text-anchor="middle">link receive side</text>
+  <text class="small" x="290" y="478" text-anchor="middle">upstream toward IP</text>
+
+  <rect x="410" y="410" width="170" height="82" rx="14" fill="#efe3d7" stroke="#9a6d47" stroke-width="2"/>
+  <text class="mono" x="495" y="439" text-anchor="middle">APP</text>
+  <text class="small" x="495" y="460" text-anchor="middle">passes DLPI indication,</text>
+  <text class="small" x="495" y="478" text-anchor="middle">ARP handles ARP frames</text>
+
+  <rect x="615" y="410" width="165" height="82" rx="14" fill="#c7deed" stroke="#5f7a88" stroke-width="2"/>
+  <text class="mono" x="697" y="439" text-anchor="middle">ipintr()</text>
+  <text class="small" x="697" y="460" text-anchor="middle">validate and reassemble</text>
+  <text class="small" x="697" y="478" text-anchor="middle">fragmented datagrams</text>
+
+  <rect x="815" y="410" width="235" height="82" rx="14" fill="#d5ead5" stroke="#6f8f77" stroke-width="2"/>
+  <text class="mono" x="932" y="434" text-anchor="middle">ip_protox[] plus transport</text>
+  <text class="small" x="932" y="455" text-anchor="middle">deliver N_UNITDATA_IND to tcp_input()</text>
+  <text class="small" x="932" y="473" text-anchor="middle">or udp_input(), raw IP, or ICMP</text>
+
+  <rect x="1085" y="410" width="180" height="82" rx="14" fill="#f4d9a6" stroke="#a18348" stroke-width="2"/>
+  <text class="mono" x="1175" y="439" text-anchor="middle">sockmodrput()</text>
+  <text class="small" x="1175" y="460" text-anchor="middle">or timod for TLI or XTI</text>
+  <text class="small" x="1175" y="478" text-anchor="middle">translate transport indications</text>
+
+  <rect x="1300" y="410" width="170" height="82" rx="14" fill="#d9e9f4" stroke="#5f7a88" stroke-width="2"/>
+  <text class="label" x="1385" y="439" text-anchor="middle">recv(), accept(),</text>
+  <text class="label" x="1385" y="462" text-anchor="middle">or TLI receive</text>
+
+  <line class="edge" x1="170" y1="451" x2="205" y2="451"/>
+  <line class="edge" x1="375" y1="451" x2="410" y2="451"/>
+  <line class="edge" x1="580" y1="451" x2="615" y2="451"/>
+  <line class="edge" x1="780" y1="451" x2="815" y2="451"/>
+  <line class="edge" x1="1050" y1="451" x2="1085" y2="451"/>
+  <line class="edge" x1="1265" y1="451" x2="1300" y2="451"/>
+
+  <rect x="108" y="384" width="70" height="24" rx="12" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="token" x="143" y="400" text-anchor="middle">frame</text>
+
+  <rect x="590" y="384" width="92" height="24" rx="12" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="token" x="636" y="400" text-anchor="middle">IPv4 payload</text>
+
+  <rect x="1045" y="384" width="112" height="24" rx="12" fill="#ffffff" stroke="#5f7a88" stroke-width="1.5"/>
+  <text class="token" x="1101" y="400" text-anchor="middle">TPI indications</text>
+
+  <rect x="845" y="590" width="520" height="210" rx="20" fill="#fffaf1" stroke="#a18348" stroke-width="2"/>
+  <text class="section" x="875" y="625">Passive open side path for listen() and accept()</text>
+
+  <text class="small" x="875" y="660">1. tcp_input() sees a SYN on a listening endpoint and allocates a child with inpnewconn().</text>
+  <text class="small" x="875" y="688">2. The child starts on the incomplete queue t_q0 while the handshake is still in flight.</text>
+  <text class="small" x="875" y="716">3. Once the handshake completes, inpisconnected() moves the child to the completed queue t_q.</text>
+  <text class="small" x="875" y="744">4. TCP emits T_CONN_IND upstream, and the socket layer can satisfy accept().</text>
+  <text class="small" x="875" y="772">5. Those listen queues are native TCP state; sockmod only exposes them as BSD socket semantics.</text>
+
+  <line class="guide" x1="932" y1="492" x2="932" y2="590"/>
+  <line class="guide" x1="1260" y1="700" x2="1335" y2="492"/>
+</svg>

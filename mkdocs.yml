@@ -55,10 +55,13 @@ nav:
               - NSXT Multiplexor: drivers/nsxt.md
           - STREAMS Modules:
               - ANSI: drivers/ansi.md
+              - APP: drivers/app.md
               - Char Translation: drivers/char.md
               - Connld: drivers/connld.md
               - Ldterm: drivers/ldterm.md
               - Pipemod: drivers/pipemod.md
+              - Sockmod: drivers/sockmod.md
+              - Timod: drivers/timod.md
               - Ttcompat: drivers/ttcompat.md
           - Network And TLI Endpoints:
               - ARP: drivers/arp.md
@@ -71,6 +74,12 @@ nav:
               - TICLTS: drivers/ticlts.md
               - TICOTS: drivers/ticots.md
               - TICOTSOR: drivers/ticotsor.md
+  - Networking:
+      - Overview: networking/index.md
+      - Diagrams: networking/diagrams.md
+      - Architecture: networking/architecture.md
+      - Socket And TLI Flow: networking/socket-and-tli-flow.md
+      - TCP/IP Data Path: networking/tcpip-data-path.md
   - Syscalls:
       - Reference: syscalls.md
       - Porting Guide: syscall-porting-guide.md

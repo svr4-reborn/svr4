@@ -9,10 +9,11 @@ The `ip` endpoint is the clone-backed Internet Protocol entry point. Its core im
 | Key source file | `uts/i386/netinet/ip_main.c` |
 | Access path | Clone-backed via the `clone` driver |
 | Staged node metadata | `clone ip c ip` |
-| Dedicated major | None; shares clone-open machinery |
+| Default generated state | Enabled in the default AT386 config; historical `sdev` record is `N` |
+| Public node major | `clone`; clone-open dispatches to the `ip` STREAMS `cdevsw` entry |
 
 ## Current Role
 
 - Implements the core IPv4 protocol layer for routing, fragmentation, and mux coordination.
-- Exposes its user-visible endpoint through clone-backed naming.
+- When enabled, exposes its user-visible endpoint through clone-backed naming.
 - Is a central anchor for network-stack debugging above the link layer.

@@ -134,7 +134,7 @@ The synthetic AT386 boot build also now enables `DEBUG` by default, so the exist
 
 The `/unix` loader no longer pauses for a keystroke after printing `BKI found version 2`; the historical debug macro wrapped a `getchar()` there, which would otherwise stall every debug boot right before handing control to the kernel.
 
-The hybrid image builder now overlays the local bootloader onto the reference image boot region instead of zeroing the whole region first. This preserves required trailing bytes from the historical floppy boot area.
+The hybrid image builder still overlays the local bootloader onto the reference image boot region instead of zeroing the whole region first. The AT386 `fdboot` build now also pads the flat bootloader image to the full 30-sector stage-1 load window with the historical `0xF6` fill pattern, so the loaded bootstrap region no longer depends on whatever bytes happened to remain in the reference image after the local bootloader EOF.
 
 For repeatable launch and probe flows, use the helper script:
 
