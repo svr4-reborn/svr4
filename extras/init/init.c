@@ -1,11 +1,13 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <stropts.h>
 #include <termios.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #define SAD_SAP (('D' << 8) | 0x01)
 #define SAP_RANGE 2
@@ -101,6 +103,7 @@ static void configure_console_autopush(void) {
 
 static void initialize_workstation_console(void) {
     struct stat kdvm_stat;
+    struct stat mux_stat;
     gvid_t mapping;
     dev_t video_devices[1];
     int muxfd;
@@ -113,6 +116,11 @@ static void initialize_workstation_console(void) {
     muxfd = open("/dev/vt00", O_RDWR);
     if(muxfd < 0)
         return;
+
+    if(fstat(muxfd, &mux_stat) < 0) {
+        close(muxfd);
+        return;
+    }
 
     devfd = open("/dev/kd/kd00", O_RDWR);
     if(devfd < 0) {
@@ -132,7 +140,7 @@ static void initialize_workstation_console(void) {
         if(gvidfd >= 0) {
             mapping.gvid_num = 1;
             mapping.gvid_buf = video_devices;
-            mapping.gvid_maj = 5;
+            mapping.gvid_maj = (major_t)getmajor(mux_stat.st_rdev);
             ioctl(gvidfd, GVID_SETTABLE, &mapping);
             close(gvidfd);
         }
@@ -188,9 +196,18 @@ static void init_stdio(void) {
     }
 }
 
+char* const default_environ[] = {
+    "PATH=/bin:/usr/bin:/sbin:/usr/sbin",
+    "HOME=/root",
+    "TERM=vt100",
+    nullptr
+};
+
 int launch_process(const char *path, char *const argv[], char *const envp[]) {
     if(fork() == 0) {
-        setpgrp();
+        if(setsid() >= 0) {
+            init_stdio();
+        }
         execve(path, argv, envp);
         _exit(1);
     }
@@ -208,8 +225,8 @@ int main(int argc, char **argv) {
     init_stdio();
     printf("The system is coming up.\r\n");
     fflush(stdout);
-    
-    launch_process("/bin/bash", shell_argv, nullptr);
+
+    launch_process("/bin/bash", shell_argv, default_environ);
 
     for(;;) {
         pause();
