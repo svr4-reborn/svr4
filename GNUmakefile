@@ -19,7 +19,7 @@ build-mlibc $(SYSROOT)/usr/lib/libc.so: $(BUILD_FOLDER)/.jinx-parameters
 	@cd $(BUILD_FOLDER) && $(JINX) build mlibc
 	@cd $(BUILD_FOLDER) && $(JINX) install -f $(SYSROOT) mlibc
 
-BASE_PKGS=svr4_init bash coreutils
+BASE_PKGS=svr4_init bash coreutils wsdiag wsdemo
 .PHONY: ensure-installed
 ensure-installed:
 	@cd $(BUILD_FOLDER) && $(JINX) install -f $(SYSROOT) $(BASE_PKGS)

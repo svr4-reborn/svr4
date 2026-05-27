@@ -68,6 +68,7 @@ _DEFAULT_DEVICE_ASSIGNMENTS = {
     '/dev/syscon': (UFS_IFCHR, 30, 0),
     '/dev/vt00': (UFS_IFCHR, 5, 0),
     '/dev/vtmon': (UFS_IFCHR, 30, 15),
+    '/dev/video': (UFS_IFCHR, 29, 0),
     '/dev/vidadm': (UFS_IFCHR, 29, 1),
     '/dev/kd/kd00': (UFS_IFCHR, 30, 0),
     '/dev/kd/kdvm00': (UFS_IFCHR, 20, 0),
@@ -618,6 +619,7 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             fields = stripped.split()
             if len(fields) < 6 or fields[0] != 'gvid':
                 break
+            assignments['/dev/video'] = (UFS_IFCHR, int(fields[5], 0), 0)
             assignments['/dev/vidadm'] = (UFS_IFCHR, int(fields[5], 0), 1)
             break
 
