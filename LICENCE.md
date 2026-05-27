@@ -32,3 +32,14 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 ## AT&T code modifications
 
 As far as is legally possible, all changes to code are also licenced under MIT, see above.
+
+The original copyright notice on-boot was the following:
+
+```
+AT&T UNIX System V/386 Release 4 Version 2.1 // Version fields filled in at build time
+Copyright (c) 1984, 1986, 1987, 1988, 1989, 1990 AT&T
+Copyright (c) 1990 UNIX System Laboratories, Inc.
+Copyright (c) 1987, 1988 Microsoft Corp.
+Copyright (c) 1986, 1987, 1988, 1989, 1990 Intel Corp. // on some build configurations only
+All Rights Reserved
+```
