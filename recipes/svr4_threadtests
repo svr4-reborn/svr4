@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=svr4_threadtests
+version=1.0
+revision=1
+source_dir="extras/threadtests"
+imagedeps="build-essential meson ninja-build"
+hostdeps="gcc"
+deps="mlibc"
+
+configure() {
+    meson_configure_noflags
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+    chmod 755 "${dest_dir}${prefix}/bin/run-svr4-thread-tests"
+
+    post_package_strip
+}
