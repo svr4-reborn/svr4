@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/bin/svr4-thread-tests "$@"
