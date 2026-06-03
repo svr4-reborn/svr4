@@ -1,0 +1,12 @@
+#! /bin/sh
+
+name=xtrans
+version=1.6.0
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libxtrans.git"
+commit="cf05ba4a10c90da2c63805a5375e983b174e28b0"
+hostdeps="autoconf automake libtool xorg-macros pkg-config"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
