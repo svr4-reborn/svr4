@@ -1,0 +1,12 @@
+#! /bin/sh
+
+name=xorg-util-macros
+version=1.20.2
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/util/macros.git"
+commit="a9d71e3fd8e6758b70be31c586921bbbcd2a8449"
+hostdeps="autoconf automake libtool"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
