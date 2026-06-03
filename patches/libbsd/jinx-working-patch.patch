@@ -1,0 +1,192 @@
+diff --git libbsd-clean/configure.ac libbsd-workdir/configure.ac
+index 2a15d72..f88a6eb 100644
+--- libbsd-clean/configure.ac
++++ libbsd-workdir/configure.ac
+@@ -86,6 +86,7 @@ abi_timeconv=unknown
+ abi_vis=unknown
+ abi_wcsl=unknown
+ 
++AC_MSG_WARN([host os is $host_os])
+ AS_CASE([$host_os],
+   [*-gnu* | gnu*], [
+     api_time_macros=no
+@@ -148,6 +149,59 @@ AS_CASE([$host_os],
+     abi_vis=yes
+     abi_wcsl=yes
+   ],
++  [*mlibc*], [
++    api_time_macros=no
++
++    abi_accmode=yes
++    abi_arc4random=yes
++    abi_arc4random_stir=no
++    abi_asprintf=no
++    abi_bsd_getopt=yes
++    abi_closefrom=no
++    abi_err=yes
++    abi_errc=yes
++    abi_expand_number=yes
++    abi_explicit_bzero=yes
++    abi_fgetln=yes
++    abi_flopen=yes
++    abi_fmtcheck=no
++    abi_fpurge=yes
++    abi_freezero=yes
++    abi_funopen=yes
++    abi_getbsize=yes
++    abi_getpeereid=yes
++    abi_humanize_number=yes
++    abi_id_from_name=yes
++    # DROP: On glibc.
++    abi_inet_net_pton=no
++    # DROP: On libmd.
++    abi_md5=no
++    abi_name_from_id=yes
++    abi_nlist=yes
++    abi_pidfile=yes
++    abi_proctitle=yes
++    abi_progname=yes
++    abi_readpassphrase=yes
++    # DROP: On glibc >= 2.26.
++    #abi_reallocarray=no
++    abi_reallocarray=yes
++    abi_reallocf=yes
++    abi_recallocarray=yes
++    abi_stringlist=yes
++    abi_sort=yes
++    # DROP: On glibc >= 2.38.
++    #abi_strl=no
++    abi_strl=yes
++    abi_strmode=yes
++    abi_strnstr=yes
++    abi_strtonum=yes
++    abi_strtox=yes
++    abi_timeconv=yes
++    # DROP: On libmd.
++    abi_transparent_libmd=no
++    abi_vis=yes
++    abi_wcsl=yes
++  ],
+   [*-musl*], [
+     api_time_macros=no
+ 
+diff --git libbsd-clean/get-version libbsd-workdir/get-version
+index 591f593..a23be5f 100755
+--- libbsd-clean/get-version
++++ libbsd-workdir/get-version
+@@ -45,4 +45,4 @@ else
+ fi
+ 
+ # Use printf to avoid the trailing new line that m4_esyscmd would not handle.
+-printf "$version"
++printf "%s" "$version"
+\ No newline at end of file
+diff --git libbsd-clean/src/getentropy.c libbsd-workdir/src/getentropy.c
+index b4b3fe3..4904422 100644
+--- libbsd-clean/src/getentropy.c
++++ libbsd-workdir/src/getentropy.c
+@@ -24,7 +24,7 @@
+  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
+-#if defined(__linux__)
++#if defined(__linux__) || defined (__svr4__)
+ #include "getentropy_linux.c"
+ #elif defined(__GNU__)
+ #include "getentropy_hurd.c"
+diff --git libbsd-clean/src/getentropy_linux.c libbsd-workdir/src/getentropy_linux.c
+index 9cb3368..062c67a 100644
+--- libbsd-clean/src/getentropy_linux.c
++++ libbsd-workdir/src/getentropy_linux.c
+@@ -26,10 +26,12 @@
+ #include <sys/param.h>
+ #include <sys/ioctl.h>
+ #include <sys/resource.h>
++#ifndef __svr4__
+ #include <sys/syscall.h>
+ #ifdef SYS__sysctl
+ #include <linux/sysctl.h>
+ #endif
++#endif
+ #include <sys/statvfs.h>
+ #include <sys/socket.h>
+ #include <sys/mount.h>
+@@ -75,11 +77,11 @@
+ int	getentropy(void *buf, size_t len);
+ 
+ static int gotdata(char *buf, size_t len);
+-#if defined(SYS_getrandom) && defined(GRND_NONBLOCK)
++#if defined(SYS_getrandom) && defined(GRND_NONBLOCK) && defined(__linux__)
+ static int getentropy_getrandom(void *buf, size_t len);
+ #endif
+ static int getentropy_urandom(void *buf, size_t len);
+-#ifdef SYS__sysctl
++#if defined(SYS__sysctl) && defined(__linux__)
+ static int getentropy_sysctl(void *buf, size_t len);
+ #endif
+ static int getentropy_fallback(void *buf, size_t len);
+@@ -95,7 +97,7 @@ getentropy(void *buf, size_t len)
+ 		return (-1);
+ 	}
+ 
+-#if defined(SYS_getrandom) && defined(GRND_NONBLOCK)
++#if defined(SYS_getrandom) && defined(GRND_NONBLOCK) && defined(__linux__)
+ 	/*
+ 	 * Try descriptor-less getrandom(), in non-blocking mode.
+ 	 *
+@@ -119,7 +121,7 @@ getentropy(void *buf, size_t len)
+ 	if (ret != -1)
+ 		return (ret);
+ 
+-#ifdef SYS__sysctl
++#if defined(SYS__sysctl) && defined(__linux__)
+ 	/*
+ 	 * Try to use sysctl CTL_KERN, KERN_RANDOM, RANDOM_UUID.
+ 	 * sysctl is a failsafe API, so it guarantees a result.  This
+@@ -194,7 +196,7 @@ gotdata(char *buf, size_t len)
+ 	return (0);
+ }
+ 
+-#if defined(SYS_getrandom) && defined(GRND_NONBLOCK)
++#if defined(SYS_getrandom) && defined(GRND_NONBLOCK) && defined(__linux__)
+ static int
+ getentropy_getrandom(void *buf, size_t len)
+ {
+@@ -271,7 +273,7 @@ nodevrandom:
+ 	return (-1);
+ }
+ 
+-#ifdef SYS__sysctl
++#if defined(SYS__sysctl) && defined(__linux__)
+ static int
+ getentropy_sysctl(void *buf, size_t len)
+ {
+diff --git libbsd-clean/src/getpeereid.c libbsd-workdir/src/getpeereid.c
+index 193f366..fdbc903 100644
+--- libbsd-clean/src/getpeereid.c
++++ libbsd-workdir/src/getpeereid.c
+@@ -40,7 +40,7 @@ int
+ getpeereid(int s, uid_t *euid, gid_t *egid)
+ {
+ /* XXX: This should be autodetected at build time instead. */
+-#if defined(__linux__)
++#if defined(__linux__) || defined(__svr4__)
+ 	struct ucred cred;
+ #elif defined(__OpenBSD__)
+ 	struct sockpeercred cred;
+diff --git libbsd-clean/src/progname.c libbsd-workdir/src/progname.c
+index 83e8652..f275072 100644
+--- libbsd-clean/src/progname.c
++++ libbsd-workdir/src/progname.c
+@@ -50,7 +50,11 @@
+ #endif
+ 
+ #ifdef HAVE___PROGNAME
++#ifdef __mlibc__
++extern char *__progname;
++#else
+ extern const char *__progname;
++#endif
+ #else
+ static const char *__progname = NULL;
+ #endif

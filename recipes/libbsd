@@ -1,0 +1,29 @@
+#!/bin/bash
+
+name=libbsd
+repology_srcname=libbsd
+version=0.12.2
+revision=1
+git_url="https://gitlab.freedesktop.org/libbsd/libbsd.git"
+commit="04a24db27ad1572f766bad772cdd9c146e6d9cf0"
+hostrundeps="automake autoconf libtool"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+prepare() {
+    autoreconf -fvi
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
