@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=libXdmcp
+version=1.1.5
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libxdmcp.git"
+commit="1192d3bc407348ff316bd3bffc791b3ac73f591b"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config"
+hostdeps="gcc pkg-config"
+deps="xorg-proto"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
