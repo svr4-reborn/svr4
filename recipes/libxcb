@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libxcb
+version=1.17.0
+revision=1
+git_url=https://gitlab.freedesktop.org/xorg/lib/libxcb.git
+commit="622152ee42a310876f10602601206954b8d0613e"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config"
+hostdeps="gcc pkg-config"
+deps="xorg-proto libXau libXdmcp xcb-proto xorg-util-macros"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
+
+configure() {
+    autotools_configure \
+        --without-doyxgen
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
