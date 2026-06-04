@@ -1,0 +1,12 @@
+#! /bin/sh
+
+name=xorg-font-util
+version=1.20.2
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/font/util.git"
+commit="5c92c11482e017fa7210a71b6f44e40042816209"
+hostdeps="autoconf automake libtool xorg-macros"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}

@@ -1,0 +1,24 @@
+#! /bin/sh
+
+name=xorg-font-util
+from_source=xorg-font-util
+revision=1
+imagedeps="build-essential"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+        strip_command=strip \
+    post_package_strip
+}
