@@ -1,0 +1,12 @@
+#! /bin/sh
+
+name=xkbcomp
+version=1.5.0
+revision=2
+git_url="https://gitlab.freedesktop.org/xorg/app/xkbcomp.git"
+commit="2c7789785981ad1fce3858c726615b49293f7de0"
+imagedeps="meson ninja-build"
+hostdeps="gcc pkg-config"
+deps="core-libs xorg-util-macros xorg-proto libX11 libxkbfile xkeyboard-config"
+
+meson_recipe
