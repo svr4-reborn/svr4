@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=xauth
+version=1.1.5
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/app/xauth.git"
+commit="6fe9365f11181a043f151f2e67f36015c278791d"
+imagedeps="build-essential"
+hostrundeps="autoconf automake libtool xorg-macros pkg-config xtrans"
+hostdeps="gcc autoconf automake libtool xorg-macros xtrans"
+deps="xorg-proto libX11 libXau libXdmcp libXext libXmu libxtrans"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
