@@ -1,0 +1,22 @@
+#! /bin/sh
+
+name=libxcvt
+version=0.1.3
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libxcvt.git"
+commit="dd8631c61465cc0de5e476c7a98e56528d62b163"
+imagedeps="meson ninja-build"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    meson_configure_noflags
+}
+
+build() {
+    meson_build
+}
+
+package() {
+    meson_install
+}
