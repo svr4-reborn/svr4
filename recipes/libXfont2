@@ -1,0 +1,30 @@
+#! /bin/sh
+
+name=libXfont2
+version=2.0.7
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libxfont.git"
+commit="2c2e44c94ef17ecd5003a173237b57b315e28d93"
+imagedeps="build-essential"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans"
+hostdeps="gcc pkg-config xtrans"
+deps="core-libs xorg-proto libfontenc libxtrans bzip2 zlib xorg-util-macros"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
+
+configure() {
+    autotools_configure \
+        --disable-freetype
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
