@@ -1,0 +1,28 @@
+#! /bin/sh
+
+name=xcb-proto
+version=1.17.0
+revision=1
+git_url=https://gitlab.freedesktop.org/xorg/proto/xcbproto.git
+commit="77d7fc04da729ddc5ed4aacf30253726fac24dca"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config"
+hostdeps="gcc pkg-config"
+deps="core-libs xorg-proto libXau libXdmcp"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
