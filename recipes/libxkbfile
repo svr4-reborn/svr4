@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libxkbfile
+version=1.2.0
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libxkbfile.git"
+commit="42e5dedd7fd3c7c73f3870a8751893c03c1afc69"
+imagedeps="meson ninja-build"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans"
+hostdeps="gcc pkg-config xtrans"
+deps="core-libs xorg-proto libX11 libxtrans xorg-util-macros"
+
+configure() {
+    meson_configure_noflags
+}
+
+build() {
+    meson_build
+}
+
+package() {
+    meson_install
+}
