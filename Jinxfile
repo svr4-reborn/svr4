@@ -19,6 +19,9 @@ TARGET_LDFLAGS="-Wl,-O1 -Wl,--sort-common -Wl,--as-needed -Wl,-z,now"
 
 OS_TRIPLET=${JINX_ARCH}-svr4-mlibc
 
+TARGET_CC="${OS_TRIPLET}-gcc"
+TARGET_CXX="${OS_TRIPLET}-g++"
+
 case "${JINX_ARCH}" in
     i?86)
         TARGET_CFLAGS="${TARGET_CFLAGS} -m32 -mno-mmx -mno-sse -mno-sse2"
