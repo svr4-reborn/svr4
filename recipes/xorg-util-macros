@@ -1,6 +1,6 @@
 #! /bin/sh
 
-name=xorg-macros
+name=xorg-util-macros
 from_source=xorg-util-macros
 revision=1
 hostrundeps="automake autoconf libtool xorg-macros pkg-config"
@@ -8,10 +8,7 @@ hostdeps="gcc pkg-config"
 deps="core-libs"
 
 configure() {
-        CFLAGS="$HOST_CFLAGS" \
-        CXXFLAGS="$HOST_CXXFLAGS" \
-        LDFLAGS="$HOST_LDFLAGS" \
-    "${source_dir}"/configure --prefix="${prefix}"
+    autotools_configure
 }
 
 build() {
