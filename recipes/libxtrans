@@ -1,0 +1,23 @@
+#! /bin/sh
+
+name=libxtrans
+from_source=xtrans
+revision=1
+hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans"
+hostdeps="gcc pkg-config xtrans"
+deps="xorg-proto libxcb"
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+        strip_command=strip \
+    post_package_strip
+}
