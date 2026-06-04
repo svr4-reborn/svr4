@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=libfontenc
+version=1.1.9
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libfontenc.git"
+commit="780d1f6f192a331de7b298a96e23ebc44d2a884b"
+imagedeps="build-essential"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans xorg-font-util"
+hostdeps="gcc pkg-config xtrans xorg-font-util"
+deps="core-libs xorg-util-macros xorg-proto libX11 libxtrans xorg-font-util zlib"
+
+prepare() {
+    NOCONFIGURE=1 ./autogen.sh
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
