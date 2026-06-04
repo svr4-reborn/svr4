@@ -1,0 +1,25 @@
+#! /bin/sh
+
+name=libXau
+version=1.0.12
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/lib/libxau.git"
+commit="a9c65683e68b3a4349afee5d7673b393fb924d2e"
+imagedeps="meson ninja-build"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config"
+hostdeps="gcc pkg-config"
+deps="xorg-proto"
+
+configure() {
+    meson_configure_noflags
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}
