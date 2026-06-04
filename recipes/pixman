@@ -1,0 +1,26 @@
+#! /bin/sh
+
+name=pixman
+version=0.46.4
+revision=1
+git_url="https://gitlab.freedesktop.org/pixman/pixman.git"
+commit="9cc163c9da0fb4da430641715313d95a6ec466d9"
+imagedeps="meson ninja-build"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+configure() {
+    meson_configure_noflags \
+        -Dlibpng=disabled \
+        -Dssse3=disabled \
+        -Dsse2=disabled \
+        -Dmmx=disabled
+}
+
+build() {
+    meson_build
+}
+
+package() {
+    meson_install
+}
