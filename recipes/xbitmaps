@@ -1,0 +1,12 @@
+#! /bin/sh
+
+name=xbitmaps
+version=1.1.4
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/data/bitmaps.git"
+commit="433634f36f791c2779af974ab444c4b521b4a4d8"
+imagedeps="meson ninja-build"
+hostdeps="gcc pkg-config"
+deps="core-libs"
+
+meson_recipe
