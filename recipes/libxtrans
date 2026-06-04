@@ -3,12 +3,16 @@
 name=libxtrans
 from_source=xtrans
 revision=1
+imagedeps="build-essential"
 hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans"
 hostdeps="gcc pkg-config xtrans"
 deps="xorg-proto libxcb"
 
 configure() {
-    autotools_configure
+    autotools_configure \
+        --with-keysymdefdir=${sysroot}${prefix}/include/X11 \
+        --disable-ipv6 \
+        --disable-malloc0returnsnull
 }
 
 build() {
