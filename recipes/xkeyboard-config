@@ -1,0 +1,13 @@
+#! /bin/sh
+
+name=xkeyboard-config
+version=2.47
+revision=1
+git_url="https://gitlab.freedesktop.org/xkeyboard-config/xkeyboard-config.git"
+commit="a79055334104d382bd511760b67acf9a5a161361"
+imagedeps="meson ninja-build"
+hostrundeps="automake autoconf libtool xorg-macros pkg-config xtrans"
+hostdeps="gcc pkg-config xtrans"
+deps="core-libs xorg-util-macros xorg-proto libX11 libxtrans"
+
+meson_recipe
