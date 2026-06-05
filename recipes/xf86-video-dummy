@@ -1,0 +1,27 @@
+#! /bin/sh
+
+name=xf86-video-dummy
+version=0.4.1
+revision=1
+tarball_url="https://xorg.freedesktop.org/releases/current/src/driver/xf86-video-dummy-${version}.tar.xz"
+tarball_blake2b="a75a24f2e81713bdee9249d72df45877790c85fa3ba3d25214e46bd552f896df56d71bda8e68a389a93a0ee06c8e85b0a3ee5aaa8909d16125d406a5e04129e9"
+hostdeps="gcc pkg-config"
+deps="core-libs xorg-proto xorg-server xorg-util-macros libX11"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
