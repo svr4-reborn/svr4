@@ -1,0 +1,52 @@
+#! /bin/sh
+
+name=xorg-server
+version=21.1.23
+revision=1
+git_url="https://gitlab.freedesktop.org/xorg/xserver.git"
+commit="8570e9fcec845f68f0c90caa51fd7a24764ea220"
+imagedeps="build-essential meson ninja-build"
+hostdeps="gcc pkg-config xtrans"
+deps="xorg-proto xauth xinit xkbcomp xkeyboard-config xbitmaps libX11 libXau libxcvt libXdmcp libXext libXfont2 libxcb pixman libxtrans libxkbfile libxshmfence libfontenc xcb-util libbsd openssl xorg-font-util"
+
+configure() {
+    # TODO:
+    #  - We should probably fix the stuff that causes xdmcp to not work (too lazy rn, disabled it at 3am and all I remember are missing ipv6 defines)
+    meson_configure_noflags \
+        -Dxkb_bin_dir=${prefix}/bin \
+        -Dxkb_dir=${prefix}/share/X11/xkb \
+        -Dxkb_output_dir=/var/lib/xkb \
+        -Ddefault_font_path=${prefix}/share/fonts/X11 \
+        -Dxorg=true \
+        -Dxv=true \
+        -Dxvfb=true \
+        -Dxephyr=false \
+        -Dxnest=false \
+        -Dsuid_wrapper=false \
+        -Dpciaccess=false \
+        -Ddpms=false \
+        -Dscreensaver=true \
+        -Dxres=false \
+        -Dxvmc=false \
+        -Dsystemd_logind=false \
+        -Dsecure-rpc=false \
+        -Dudev=false \
+        -Dudev_kms=false \
+        -Ddri1=false \
+        -Ddri2=false \
+        -Ddri3=false \
+        -Dint10=false \
+        -Dvgahw=false \
+        -Ddrm=false \
+        -Dglamor=false \
+        -Dglx=false \
+        -Dxdmcp=false
+}
+
+build() {
+    meson_build
+}
+
+package() {
+    meson_install
+}
