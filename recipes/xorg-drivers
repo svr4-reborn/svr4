@@ -1,0 +1,11 @@
+#! /bin/sh
+
+name=xorg-drivers
+version=21.1
+revision=2
+skip_pkg_check=yes
+deps="xf86-video-dummy"
+
+package() {
+    :
+}
