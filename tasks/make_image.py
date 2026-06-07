@@ -3,6 +3,7 @@
 import argparse
 from dataclasses import dataclass
 import importlib
+import json
 import os
 import re
 import struct
@@ -46,13 +47,16 @@ iter_ufs_directory_records = _fs_ufs.iter_ufs_directory_records
 link_ufs_path = _fs_ufs.link_ufs_path
 make_ufs_directory = _fs_ufs.make_ufs_directory
 read_ufs_inode = _fs_ufs.read_ufs_inode
+resolve_ufs_path = _fs_ufs.resolve_ufs_path
 ufs_dirsiz = _fs_ufs.ufs_dirsiz
+write_ufs_inode_mode = _fs_ufs.write_ufs_inode_mode
 write_ufs_inode_nlink = _fs_ufs.write_ufs_inode_nlink
 UFS_DIRBLKSIZ = _fs_ufs.UFS_DIRBLKSIZ
 UFS_IFBLK = _fs_ufs.UFS_IFBLK
 UFS_IFCHR = _fs_ufs.UFS_IFCHR
 UFS_IFDIR = _fs_ufs.UFS_IFDIR
 UFS_IFLNK = _fs_ufs.UFS_IFLNK
+UFS_IFMT = _fs_ufs.UFS_IFMT
 UFS_IFREG = _fs_ufs.UFS_IFREG
 UFS_ROOT_INODE = _fs_ufs.UFS_ROOT_INODE
 refresh_ufs_summary_layout = _fs_ufs.refresh_ufs_summary_layout
@@ -66,6 +70,7 @@ PT_LOAD = 1
 _DEFAULT_DEVICE_ASSIGNMENTS = {
     '/dev/console': (UFS_IFCHR, 30, 0),
     '/dev/syscon': (UFS_IFCHR, 30, 0),
+    '/dev/tty': (UFS_IFCHR, 16, 0),
     '/dev/vt00': (UFS_IFCHR, 5, 0),
     '/dev/vtmon': (UFS_IFCHR, 30, 15),
     '/dev/video': (UFS_IFCHR, 29, 0),
@@ -83,6 +88,18 @@ _DEFAULT_DEVICE_ASSIGNMENTS = {
     '/dev/zero': (UFS_IFCHR, 2, 4),
     '/dev/urandom': (UFS_IFCHR, 2, 5),
 }
+_NETWORK_NODE_MODULES = (
+    'arp',
+    'icmp',
+    'ip',
+    'llcloop',
+    'rawip',
+    'tcp',
+    'ticlts',
+    'ticots',
+    'ticotsor',
+    'udp',
+)
 
 
 @dataclass
@@ -101,8 +118,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--size', default=324, help='Size of the image in megabytes (default: 160)')
     parser.add_argument('--sysroot', default=str(REPO_ROOT / 'build/sysroot'), help='Path to the sysroot produced by Jinx')
     parser.add_argument('--stand-size', default=16, help='Size of the BFS /stand slice in megabytes (default: 16)')
-    parser.add_argument('--swap-size', default=64, help='Size of the raw swap slice in megabytes (default: 32)')
+    parser.add_argument('--swap-size', default=64, help='Size of the raw swap slice in megabytes (default: 64)')
     parser.add_argument('--ufs-bytes-per-inode', default=8192, help='Target UFS inode density in bytes per inode (default: 8192)')
+    parser.add_argument('--kernel-conf', help='Path to the generated uts/i386/conf directory (default: infer from --sysroot)')
     parser.add_argument('--heads', default=16, help='Disk geometry heads value (default: 16)')
     parser.add_argument('--sectors', default=63, help='Disk geometry sectors-per-track value (default: 63)')
     parser.add_argument('--stand-start-sector', default=64, help='Absolute disk sector where the stand slice starts (default: 64)')
@@ -525,10 +543,119 @@ def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> No
     _flush_bulk_ufs_directories(image, filesystem, directory_states)
 
 
-def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
-    config_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/cf.d/conf.c'
+def _kernel_conf_roots(*, sysroot: Path, explicit_kernel_conf: Path | None) -> list[Path]:
+    candidates = []
+    if explicit_kernel_conf is not None:
+        candidates.append(explicit_kernel_conf)
+    candidates.extend([
+        sysroot.parent / 'builds/uts/build/uts/i386/conf',
+        REPO_ROOT / 'build/builds/uts/build/uts/i386/conf',
+        REPO_ROOT / 'build/uts/i386/conf',
+    ])
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        roots.append(resolved)
+    return roots
+
+
+def _find_kernel_conf_file(conf_roots: list[Path], relative_path: str) -> Path | None:
+    for conf_root in conf_roots:
+        candidate = conf_root / relative_path
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _find_kernel_conf_directory(conf_roots: list[Path], relative_path: str) -> Path | None:
+    for conf_root in conf_roots:
+        candidate = conf_root / relative_path
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _iter_kernel_metadata_lines(path: Path) -> list[str]:
+    lines: list[str] = []
+    for raw_line in path.read_text().splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+            continue
+        lines.append(stripped)
+    return lines
+
+
+def _parse_kernel_number(token: str) -> int:
+    try:
+        return int(token, 0)
+    except ValueError:
+        return int(token, 16)
+
+
+def _parse_node_minor(token: str, character_majors: dict[str, int]) -> int:
+    if token in character_majors:
+        return character_majors[token]
+    if re.fullmatch(r'0[0-7]+', token):
+        return int(token, 8)
+    return _parse_kernel_number(token)
+
+
+def _load_kernel_character_majors(conf_roots: list[Path]) -> dict[str, int]:
+    manifest_path = _find_kernel_conf_file(conf_roots, 'cf.d/simple-idconfig.json')
+    if manifest_path is None:
+        return {}
+    manifest = json.loads(manifest_path.read_text())
+    character_majors: dict[str, int] = {}
+    for raw_device in manifest.get('devices', []):
+        if not raw_device.get('configured'):
+            continue
+        if 'c' not in str(raw_device.get('type_flags', '')):
+            continue
+        character_major = raw_device.get('char_major_start')
+        if character_major is None:
+            continue
+        character_majors[str(raw_device['name'])] = int(character_major)
+    return character_majors
+
+
+def _load_network_device_assignments(conf_roots: list[Path]) -> dict[str, tuple[int, int, int]]:
+    character_majors = _load_kernel_character_majors(conf_roots)
+    node_dir = _find_kernel_conf_directory(conf_roots, 'node.d')
+    assignments: dict[str, tuple[int, int, int]] = {}
+    if not character_majors or node_dir is None:
+        return assignments
+
+    for module_name in _NETWORK_NODE_MODULES:
+        node_path = node_dir / module_name
+        if not node_path.is_file():
+            continue
+        for line in _iter_kernel_metadata_lines(node_path):
+            fields = line.split()
+            if len(fields) < 4:
+                continue
+            device_name, relative_path, node_type, minor_token = fields[:4]
+            if not node_type.startswith('c'):
+                continue
+            major = character_majors.get(device_name)
+            if major is None:
+                continue
+            try:
+                minor = _parse_node_minor(minor_token, character_majors)
+            except ValueError:
+                continue
+            assignments[f'/dev/{relative_path}'] = (UFS_IFCHR, major, minor)
+    return assignments
+
+
+def _load_kernel_device_assignments(conf_roots: list[Path]) -> dict[str, tuple[int, int, int]]:
+    config_path = _find_kernel_conf_file(conf_roots, 'cf.d/conf.c')
     assignments = dict(_DEFAULT_DEVICE_ASSIGNMENTS)
-    if not config_path.is_file():
+    if config_path is None:
         return assignments
     pattern = re.compile(r'dev_t\s+(rootdev|pipedev|swapdev|dumpdev)\s*=\s*makedevice\((\d+),\s*(\d+)\);')
     mapping = {
@@ -542,8 +669,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
         file_type, _major, _minor = assignments[path]
         assignments[path] = (file_type, int(match.group(2)), int(match.group(3)))
 
-    sysmsg_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/sysmsg'
-    if sysmsg_mdevice_path.is_file():
+    sysmsg_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/sysmsg')
+    if sysmsg_mdevice_path is not None:
         for line in sysmsg_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -554,8 +681,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/sysmsg'] = (UFS_IFCHR, int(fields[5], 0), 0)
             break
 
-    mem_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/mem'
-    if mem_mdevice_path.is_file():
+    mem_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/mem')
+    if mem_mdevice_path is not None:
         for line in mem_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -569,8 +696,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/urandom'] = (UFS_IFCHR, mem_major, 5)
             break
 
-    cmux_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/cmux'
-    if cmux_mdevice_path.is_file():
+    cmux_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/cmux')
+    if cmux_mdevice_path is not None:
         for line in cmux_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -581,8 +708,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/vt00'] = (UFS_IFCHR, int(fields[5], 0), 0)
             break
 
-    kd_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/kd'
-    if kd_mdevice_path.is_file():
+    kd_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/kd')
+    if kd_mdevice_path is not None:
         for line in kd_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -597,8 +724,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/kd/kd01'] = (UFS_IFCHR, int(fields[5], 0), 1)
             break
 
-    kdvm_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/kdvm'
-    if kdvm_mdevice_path.is_file():
+    kdvm_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/kdvm')
+    if kdvm_mdevice_path is not None:
         for line in kdvm_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -610,8 +737,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/kd/kdvm01'] = (UFS_IFCHR, int(fields[5], 0), 1)
             break
 
-    gvid_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/gvid'
-    if gvid_mdevice_path.is_file():
+    gvid_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/gvid')
+    if gvid_mdevice_path is not None:
         for line in gvid_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -623,8 +750,8 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/vidadm'] = (UFS_IFCHR, int(fields[5], 0), 1)
             break
 
-    sad_mdevice_path = REPO_ROOT / 'build/builds/uts/build/uts/i386/conf/mdevice.d/sad'
-    if sad_mdevice_path.is_file():
+    sad_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/sad')
+    if sad_mdevice_path is not None:
         for line in sad_mdevice_path.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith('*') or stripped.startswith('#'):
@@ -636,26 +763,65 @@ def _load_kernel_device_assignments() -> dict[str, tuple[int, int, int]]:
             assignments['/dev/sad/user'] = (UFS_IFCHR, sad_major, 0)
             assignments['/dev/sad/admin'] = (UFS_IFCHR, sad_major, 1)
             break
+    assignments.update(_load_network_device_assignments(conf_roots))
+
+    # Add pseudo-terminal devices
+    character_majors = _load_kernel_character_majors(conf_roots)
+    clone_major = character_majors.get('clone', 4)
+    ptm_major = character_majors.get('ptm', 11)
+    pts_major = character_majors.get('pts', 35)
+
+    assignments['/dev/ptmx'] = (UFS_IFCHR, clone_major, ptm_major)
+    for i in range(32):
+        assignments[f'/dev/pts/{i}'] = (UFS_IFCHR, pts_major, i)
+
     return assignments
 
 
-def _populate_required_device_nodes(image: bytearray, filesystem: Any) -> None:
+def _ensure_ufs_directory(image: bytearray, filesystem: Any, path: str, *, mode: int = 0o755) -> None:
     try:
-        make_ufs_directory(image, filesystem, '/dev', mode=0o755, recompute_summary=False)
+        make_ufs_directory(image, filesystem, path, mode=mode, recompute_summary=False)
     except SystemExit as error:
         if 'already exists inside the ufs filesystem' not in str(error):
             raise
-    try:
-        make_ufs_directory(image, filesystem, '/dev/kd', mode=0o755, recompute_summary=False)
-    except SystemExit as error:
-        if 'already exists inside the ufs filesystem' not in str(error):
+        resolved = resolve_ufs_path(image, filesystem, path)
+        if resolved is None:
             raise
-    try:
-        make_ufs_directory(image, filesystem, '/dev/sad', mode=0o755, recompute_summary=False)
-    except SystemExit as error:
-        if 'already exists inside the ufs filesystem' not in str(error):
-            raise
-    for path, (file_type, major, minor) in _load_kernel_device_assignments().items():
+        inode_number, inode = resolved
+        if int(inode['mode']) & UFS_IFMT != UFS_IFDIR:
+            raise SystemExit(f'error: required path {path} exists but is not a directory')
+        write_ufs_inode_mode(image, filesystem, inode_number, UFS_IFDIR | mode)
+
+
+def _populate_required_runtime_directories(image: bytearray, filesystem: Any) -> None:
+    required_directories = {
+        '/root': 0o755,
+        '/tmp': 0o1777,
+        '/tmp/.X11-unix': 0o1777,
+        '/var': 0o755,
+        '/var/lib': 0o755,
+        '/var/lib/xkb': 0o755,
+        '/var/log': 0o755,
+    }
+    for path, mode in required_directories.items():
+        _ensure_ufs_directory(image, filesystem, path, mode=mode)
+
+
+def _required_device_directories(assignments: dict[str, tuple[int, int, int]]) -> list[str]:
+    directories = {'/dev', '/dev/kd', '/dev/sad'}
+    for path in assignments:
+        parent = Path(path).parent
+        while parent != Path('/'):
+            directories.add(parent.as_posix())
+            parent = parent.parent
+    return sorted(directories, key=lambda directory: (directory.count('/'), directory))
+
+
+def _populate_required_device_nodes(image: bytearray, filesystem: Any, conf_roots: list[Path]) -> None:
+    assignments = _load_kernel_device_assignments(conf_roots)
+    for directory in _required_device_directories(assignments):
+        _ensure_ufs_directory(image, filesystem, directory)
+    for path, (file_type, major, minor) in assignments.items():
         try:
             create_ufs_special_file(
                 image,
@@ -704,6 +870,8 @@ def _prepare_base_image(
 def build_image(args: argparse.Namespace) -> None:
     image_path = Path(args.image).resolve()
     sysroot = Path(args.sysroot).resolve()
+    explicit_kernel_conf = Path(args.kernel_conf).resolve() if args.kernel_conf else None
+    kernel_conf_roots = _kernel_conf_roots(sysroot=sysroot, explicit_kernel_conf=explicit_kernel_conf)
     stand_dir = sysroot / 'stand'
 
     size_mb = _parse_positive_int(str(args.size), name='size')
@@ -767,7 +935,8 @@ def build_image(args: argparse.Namespace) -> None:
             sectors_per_track=geometry.sectors_per_track,
         )
         _populate_root_slice(root_slice_bytes, filesystem, sysroot)
-        _populate_required_device_nodes(root_slice_bytes, filesystem)
+        _populate_required_runtime_directories(root_slice_bytes, filesystem)
+        _populate_required_device_nodes(root_slice_bytes, filesystem, kernel_conf_roots)
         refresh_ufs_summary_layout(root_slice_bytes, filesystem)
         _write_slice_bytes(temp_image_path, root_slice.start_sector, root_slice_bytes)
 
