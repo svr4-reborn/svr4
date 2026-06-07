@@ -1,0 +1,36 @@
+#!/bin/sh
+
+name=xterm
+version=410
+revision=1
+tarball_url="https://invisible-island.net/archives/xterm/xterm-${version}.tgz"
+tarball_blake2b="649d5fa7ec41ead6026d8b094499a81b45fbd032396abcd29e5153a5c5796d29f39101b1a72c90c5a5633d1d91726ad87451003bb8489015e139fe583005594e"
+hostdeps="gcc pkg-config"
+deps="core-libs ncurses libX11 libXext libXmu libXaw libXpm libXrender libXft libxkbfile"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    CPPFLAGS="${CPPFLAGS} -D_GNU_SOURCE -DSVR4 -D__svr4__ -D__svr4_reborn__ -DUSE_SYSV_PGRP -DSYSV -DUSE_USG_PTYS" \
+    LIBS="${LIBS} -ltinfo" \
+    autotools_configure \
+        --with-app-defaults=/etc/X11/app-defaults \
+        --disable-session-mgt \
+        --disable-luit \
+        --disable-tek4014 \
+        --disable-sixel-graphics \
+        --disable-tcap-fkeys \
+        --disable-tcap-query
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    make DESTDIR="${dest_dir}" install
+
+    post_package_strip
+}
