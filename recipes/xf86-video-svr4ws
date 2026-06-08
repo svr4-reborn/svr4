@@ -2,7 +2,7 @@
 
 name=xf86-video-svr4ws
 version=0.1
-revision=7
+revision=8
 source_dir="extras/xf86-video-svr4ws"
 imagedeps="build-essential meson ninja-build"
 hostdeps="gcc pkg-config"
