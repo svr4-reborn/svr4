@@ -44,6 +44,19 @@ package() {
 
     mkdir -p "${dest_dir}${prefix}"
 
+    # Create links from the normal /usr/lib/libgcc* files to the
+    # /usr/i686-svr4-mlibc/lib/libgcc* files so that the linker can find them.
+    if [ -d "tmp_libgcc_dir/usr/local/${OS_TRIPLET}/lib" ]; then
+        for libfile in tmp_libgcc_dir/usr/local/${OS_TRIPLET}/lib/libgcc*; do
+            [ -e "$libfile" ] || continue
+            [ -f "$libfile" ] || [ -L "$libfile" ] || continue
+
+            libname=$(basename "$libfile")
+            rm -f "tmp_libgcc_dir/usr/local/lib/${libname}"
+            ln -sfn "../${OS_TRIPLET}/lib/${libname}" "tmp_libgcc_dir/usr/local/lib/${libname}"
+        done
+    fi
+
     cp -r tmp_libgcc_dir/usr/local/lib "${dest_dir}${prefix}"/
     if [ -d "tmp_libgcc_dir/usr/local/${OS_TRIPLET}" ]; then
         cp -r "tmp_libgcc_dir/usr/local/${OS_TRIPLET}" "${dest_dir}${prefix}/"
