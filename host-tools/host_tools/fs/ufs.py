@@ -6,7 +6,7 @@ from typing import Any
 
 from .common import FilesystemCandidate, SECTOR_SIZE, UFS_NDADDR, UFS_ROOT_INODE
 from .ufs_directory import UFS_DIRBLKSIZ, UFSDirectoryEntry, UFSDirectoryInsertSlot, decode_ufs_directory_entry, encode_ufs_directory_entry, find_ufs_directory_insert_slot, insert_ufs_directory_entry, iter_ufs_directory_records, remove_ufs_directory_entry, rewrite_ufs_directory_entry_inode, ufs_dirsiz
-from .ufs_lowlevel import ImageBuffer, MAXCPG, MAXFRAG, MAXIPG, NBBY, NRPOS, UFS_CG_B_OFFSET, UFS_CG_BTOT_OFFSET, UFS_CG_CGX_OFFSET, UFS_CG_CS_NBFREE_OFFSET, UFS_CG_CS_NDIR_OFFSET, UFS_CG_CS_NIFREE_OFFSET, UFS_CG_FROTOR_OFFSET, UFS_CG_FRSUM_OFFSET, UFS_CG_FREE_OFFSET, UFS_CG_IROTOR_OFFSET, UFS_CG_IUSED_OFFSET, UFS_CG_MAGIC, UFS_CG_MAGIC_OFFSET, UFS_CG_NCYL_OFFSET, UFS_CG_NDBLK_OFFSET, UFS_CG_NIBLK_OFFSET, UFS_CG_ROTOR_OFFSET, UFS_CG_TIME_OFFSET, UFS_DINODE_SIZE, UFS_DI_ATIME_OFFSET, UFS_DI_BLOCKS_OFFSET, UFS_DI_CTIME_OFFSET, UFS_DI_DB_OFFSET, UFS_DI_EFTFLAG_OFFSET, UFS_DI_FLAGS_OFFSET, UFS_DI_GEN_OFFSET, UFS_DI_GID_OFFSET, UFS_DI_IB_OFFSET, UFS_DI_MODE_OFFSET, UFS_DI_MTIME_OFFSET, UFS_DI_NLINK_OFFSET, UFS_DI_SGID_OFFSET, UFS_DI_SIZE_OFFSET, UFS_DI_SUID_OFFSET, UFS_DI_UID_OFFSET, UFS_EFT_MAGIC, UFS_FS_BSIZE_OFFSET, UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_CSADDR_OFFSET, UFS_FS_CSSIZE_OFFSET, UFS_FS_CSTOTAL_NBFREE_OFFSET, UFS_FS_CSTOTAL_NDIR_OFFSET, UFS_FS_CSTOTAL_NIFREE_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_DSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_FS_MINFREE_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NCYL_OFFSET, UFS_FS_NINDIR_OFFSET, UFS_FS_NSECT_OFFSET, UFS_FS_NSPF_OFFSET, UFS_FS_SPC_OFFSET, UFS_IFBLK, UFS_IFCHR, UFS_IFDIR, UFS_IFLNK, UFS_IFMT, UFS_IFREG, UFS_MAGIC, UFS_SB_OFFSET, UFS_SB_SIZE, adjust_cg_directory_count, adjust_cg_free_blocks, adjust_cg_free_inodes, adjust_superblock_directory_count, adjust_superblock_free_blocks, adjust_superblock_free_inodes, allocate_ufs_allocation, allocate_ufs_block, allocate_ufs_fragments, allocate_ufs_inode, cg_block_offset, clear_ufs_inode, collect_indirect_data_blocks, collect_indirect_pointer_blocks, detect_ufs as detect_ufs_lowlevel, free_ufs_allocation, free_ufs_block, free_ufs_inode, i32, initialize_ufs_inode, is_frag_free, is_ufs_inode_used, read_cg_block, read_ufs_file, read_ufs_inode, read_ufs_pointer_block, set_frag_state, set_ufs_inode_state, u16, u32, ufs_allocation_byte_sizes, ufs_blkstofrags, ufs_cgbase, ufs_cgdmin, ufs_cgimin, ufs_cgstart, ufs_cgtod, ufs_data_block_offset, ufs_file_type, ufs_fragroundup, ufs_fsbtobytes, ufs_inode_byte_offset, ufs_inode_data_blocks, ufs_inode_offset, ufs_inode_pointer_blocks, ufs_is_directory, ufs_is_symlink, ufs_itod, ufs_itog, ufs_itoo, ufs_path_components, write_cg_block, write_ufs_block_lists, write_ufs_inode_blocks, write_ufs_inode_mode, write_ufs_inode_nlink, write_ufs_inode_size, write_ufs_inode_time, write_ufs_inode_times, write_ufs_inode_uid_gid, write_ufs_pointer_block
+from .ufs_lowlevel import ImageBuffer, MAXCPG, MAXFRAG, MAXIPG, NBBY, NRPOS, UFS_CG_B_OFFSET, UFS_CG_BTOT_OFFSET, UFS_CG_CGX_OFFSET, UFS_CG_CS_NBFREE_OFFSET, UFS_CG_CS_NDIR_OFFSET, UFS_CG_CS_NIFREE_OFFSET, UFS_CG_FROTOR_OFFSET, UFS_CG_FRSUM_OFFSET, UFS_CG_FREE_OFFSET, UFS_CG_IROTOR_OFFSET, UFS_CG_IUSED_OFFSET, UFS_CG_MAGIC, UFS_CG_MAGIC_OFFSET, UFS_CG_NCYL_OFFSET, UFS_CG_NDBLK_OFFSET, UFS_CG_NIBLK_OFFSET, UFS_CG_ROTOR_OFFSET, UFS_CG_TIME_OFFSET, UFS_DINODE_SIZE, UFS_DI_ATIME_OFFSET, UFS_DI_BLOCKS_OFFSET, UFS_DI_CTIME_OFFSET, UFS_DI_DB_OFFSET, UFS_DI_EFTFLAG_OFFSET, UFS_DI_FLAGS_OFFSET, UFS_DI_GEN_OFFSET, UFS_DI_GID_OFFSET, UFS_DI_IB_OFFSET, UFS_DI_MODE_OFFSET, UFS_DI_MTIME_OFFSET, UFS_DI_NLINK_OFFSET, UFS_DI_SGID_OFFSET, UFS_DI_SIZE_OFFSET, UFS_DI_SUID_OFFSET, UFS_DI_UID_OFFSET, UFS_EFT_MAGIC, UFS_FS_BSIZE_OFFSET, UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_CSADDR_OFFSET, UFS_FS_CSSIZE_OFFSET, UFS_FS_CSTOTAL_NBFREE_OFFSET, UFS_FS_CSTOTAL_NDIR_OFFSET, UFS_FS_CSTOTAL_NIFREE_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_DSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_FS_MINFREE_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NCYL_OFFSET, UFS_FS_NINDIR_OFFSET, UFS_FS_NSECT_OFFSET, UFS_FS_NSPF_OFFSET, UFS_FS_SPC_OFFSET, UFS_IFBLK, UFS_IFCHR, UFS_IFDIR, UFS_IFLNK, UFS_IFMT, UFS_IFREG, UFS_MAGIC, UFS_SB_OFFSET, UFS_SB_SIZE, adjust_cg_directory_count, adjust_cg_free_blocks, adjust_cg_free_inodes, adjust_superblock_directory_count, adjust_superblock_free_blocks, adjust_superblock_free_inodes, allocate_ufs_allocation, allocate_ufs_block, allocate_ufs_fragments, cg_block_offset, clear_ufs_inode, collect_indirect_data_blocks, collect_indirect_pointer_blocks, detect_ufs as detect_ufs_lowlevel, detect_ufs_at_start as detect_ufs_at_start_lowlevel, free_ufs_allocation, free_ufs_block, free_ufs_inode, i32, initialize_ufs_inode, is_frag_free, is_ufs_inode_used, read_cg_block, read_ufs_file, read_ufs_inode, read_ufs_pointer_block, set_frag_state, set_ufs_inode_state, u16, u32, ufs_allocation_byte_sizes, ufs_blkstofrags, ufs_cgbase, ufs_cgdmin, ufs_cgimin, ufs_cgstart, ufs_cgtod, ufs_data_block_offset, ufs_file_type, ufs_fragroundup, ufs_fsbtobytes, ufs_inode_byte_offset, ufs_inode_data_blocks, ufs_inode_offset, ufs_inode_pointer_blocks, ufs_is_directory, ufs_is_symlink, ufs_itod, ufs_itog, ufs_itoo, ufs_path_components, write_cg_block, write_ufs_block_lists, write_ufs_inode_blocks, write_ufs_inode_mode, write_ufs_inode_nlink, write_ufs_inode_size, write_ufs_inode_time, write_ufs_inode_times, write_ufs_inode_uid_gid, write_ufs_pointer_block
 
 
 _UFS_CG_BLOCK_ALLOCATION_HINTS: dict[tuple[int, int, int, int], int] = {}
@@ -44,6 +44,24 @@ UFS_FS_RONLY_OFFSET = 210
 UFS_FS_OKAY = 0x7C269D38
 
 
+def _ufs_runtime_state(filesystem: FilesystemCandidate) -> dict[str, Any]:
+    state = filesystem.details.get('_runtime_state')
+    if isinstance(state, dict):
+        return state
+    state = {
+        'cg_block_hints': {},
+        'allocatable_cg_blocks': {},
+        'metadata_normalized': False,
+        'pointer_blocks': {},
+    }
+    filesystem.details['_runtime_state'] = state
+    return state
+
+
+def clear_ufs_filesystem_runtime_caches(filesystem: FilesystemCandidate) -> None:
+    filesystem.details.pop('_runtime_state', None)
+
+
 def _ufs_pointer_block_cache_key(image: ImageBuffer, filesystem: FilesystemCandidate, fs_block: int) -> tuple[int, int, int, int]:
     return (id(image), filesystem.start_offset, filesystem.super_offset, fs_block)
 
@@ -53,6 +71,14 @@ def _clear_ufs_pointer_block_cache(image: ImageBuffer) -> None:
     stale_keys = [cache_key for cache_key in _UFS_POINTER_BLOCK_CACHE if cache_key[0] == image_id]
     for cache_key in stale_keys:
         del _UFS_POINTER_BLOCK_CACHE[cache_key]
+
+
+def clear_ufs_runtime_caches(image: ImageBuffer | None = None) -> None:
+    del image
+    _UFS_CG_BLOCK_ALLOCATION_HINTS.clear()
+    _UFS_ALLOCATABLE_CG_BLOCK_CACHE.clear()
+    _UFS_METADATA_NORMALIZATION_STATE.clear()
+    _UFS_POINTER_BLOCK_CACHE.clear()
 
 
 def _ufs_allocatable_cg_block_cache_key(image: ImageBuffer, filesystem: FilesystemCandidate, cg: int) -> tuple[int, int, int, int]:
@@ -68,6 +94,10 @@ def _clear_ufs_allocatable_cg_block_cache(image: ImageBuffer) -> None:
 
 def detect_ufs(image: ImageBuffer) -> list[FilesystemCandidate]:
     return detect_ufs_lowlevel(image)
+
+
+def detect_ufs_at_start(image: ImageBuffer, fs_start: int = 0) -> FilesystemCandidate | None:
+    return detect_ufs_at_start_lowlevel(image, fs_start)
 
 
 def ufs_fsbtobytes(fs: dict[str, Any], fs_block: int) -> int:
@@ -181,6 +211,40 @@ def ufs_allocation_byte_sizes(fs: dict[str, Any], size: int) -> list[int]:
         logical_bytes = min(block_size, remaining)
         block_index += 1
         if logical_bytes == block_size or needed_blocks > UFS_NDADDR:
+            allocations.append(block_size)
+        else:
+            allocations.append(ufs_fragroundup(fs, logical_bytes))
+        remaining -= block_size
+    return allocations
+
+
+def extend_ufs_allocation_byte_sizes(
+    fs: dict[str, Any],
+    current_allocations: list[int],
+    old_size: int,
+    new_size: int,
+) -> list[int]:
+    if new_size <= old_size:
+        return ufs_allocation_byte_sizes(fs, new_size)
+    block_size = int(fs['bsize'])
+    old_needed_blocks = 0 if old_size <= 0 else (old_size + block_size - 1) // block_size
+    new_needed_blocks = (new_size + block_size - 1) // block_size
+
+    if len(current_allocations) != old_needed_blocks:
+        return ufs_allocation_byte_sizes(fs, new_size)
+    if old_needed_blocks <= UFS_NDADDR and new_needed_blocks > UFS_NDADDR:
+        return ufs_allocation_byte_sizes(fs, new_size)
+    if new_needed_blocks == old_needed_blocks:
+        requested_allocations = ufs_allocation_byte_sizes(fs, new_size)
+        if requested_allocations == current_allocations:
+            return list(current_allocations)
+        return requested_allocations
+
+    allocations = list(current_allocations)
+    remaining = new_size - (old_needed_blocks * block_size)
+    for block_index in range(old_needed_blocks, new_needed_blocks):
+        logical_bytes = min(block_size, remaining)
+        if logical_bytes == block_size or new_needed_blocks > UFS_NDADDR:
             allocations.append(block_size)
         else:
             allocations.append(ufs_fragroundup(fs, logical_bytes))
@@ -324,6 +388,7 @@ def _compute_inode_block_count(
 def build_ufs_filesystem_image(
     image_size: int,
     *,
+    target_image: ImageBuffer | None = None,
     timestamp: int = 0,
     block_size: int = 8192,
     fragment_size: int = SECTOR_SIZE,
@@ -333,7 +398,7 @@ def build_ufs_filesystem_image(
     inode_block_number: int = 6,
     tracks_per_cylinder: int | None = None,
     sectors_per_track: int | None = None,
-) -> tuple[bytearray, FilesystemCandidate]:
+) -> tuple[ImageBuffer, FilesystemCandidate]:
     if image_size <= 0 or image_size % SECTOR_SIZE != 0:
         raise SystemExit('error: UFS image size must be a positive multiple of 512 bytes')
     if block_size < 4096 or block_size > UFS_SB_SIZE:
@@ -351,9 +416,6 @@ def build_ufs_filesystem_image(
 
     fragments_per_block = block_size // fragment_size
     block_shift = _power_of_two_shift(fragments_per_block)
-    summary_frag_number = summary_block_number << block_shift
-    cylinder_group_frag_number = cylinder_group_block_number << block_shift
-    inode_frag_number = inode_block_number << block_shift
 
     fsbtodb = _power_of_two_shift(fragment_size // SECTOR_SIZE)
     bshift = _power_of_two_shift(block_size)
@@ -384,6 +446,21 @@ def build_ufs_filesystem_image(
         cylinder_groups = (total_cylinders + cylinders_per_group - 1) // cylinders_per_group
         fragments_per_group = cylinders_per_group * sectors_per_cylinder
 
+    summary_frag_number = summary_block_number << block_shift
+    summary_bytes = cylinder_groups * UFS_CSUM_SIZE
+    summary_area_bytes = _align_up(summary_bytes, fragment_size)
+    summary_fragments = summary_area_bytes // fragment_size
+    minimum_cylinder_group_block = _align_up(summary_frag_number + summary_fragments, fragments_per_block) // fragments_per_block
+    if cylinder_group_block_number < minimum_cylinder_group_block:
+        metadata_block_delta = minimum_cylinder_group_block - cylinder_group_block_number
+        cylinder_group_block_number += metadata_block_delta
+        inode_block_number += metadata_block_delta
+    if inode_block_number <= cylinder_group_block_number:
+        inode_block_number = cylinder_group_block_number + 1
+
+    cylinder_group_frag_number = cylinder_group_block_number << block_shift
+    inode_frag_number = inode_block_number << block_shift
+
     inode_block_count = _compute_inode_block_count(
         image_size,
         block_size=block_size,
@@ -398,16 +475,15 @@ def build_ufs_filesystem_image(
     if image_size < required_bytes:
         raise SystemExit(f'error: UFS slice is too small ({image_size} bytes); need at least {required_bytes} bytes')
 
-    summary_bytes = cylinder_groups * UFS_CSUM_SIZE
-    summary_area_bytes = _align_up(summary_bytes, fragment_size)
-    summary_fragments = summary_area_bytes // fragment_size
     csums_per_block = block_size // UFS_CSUM_SIZE
     csshift = _power_of_two_shift(csums_per_block)
     csmask = _u32_mask(-csums_per_block)
     if summary_frag_number + summary_fragments > cylinder_group_frag_number:
         raise SystemExit('error: UFS cylinder summary area overlaps the cylinder group block')
 
-    image = bytearray(image_size)
+    image = bytearray(image_size) if target_image is None else target_image
+    if len(image) != image_size:
+        raise SystemExit('error: target UFS image size does not match the requested filesystem size')
     filesystem = FilesystemCandidate(
         kind='ufs',
         start_offset=0,
@@ -525,23 +601,23 @@ def format_ufs_filesystem(
     tracks_per_cylinder: int | None = None,
     sectors_per_track: int | None = None,
 ) -> FilesystemCandidate:
+    clear_ufs_runtime_caches(image)
     formatted, filesystem = build_ufs_filesystem_image(
         len(image),
+        target_image=image,
         timestamp=timestamp,
         block_size=block_size,
         bytes_per_inode=bytes_per_inode,
         tracks_per_cylinder=tracks_per_cylinder,
         sectors_per_track=sectors_per_track,
     )
-    _clear_ufs_allocatable_cg_block_cache(image)
-    _clear_ufs_pointer_block_cache(image)
-    image[:] = formatted
+    clear_ufs_runtime_caches(image)
     return filesystem
 
 
 def read_ufs_pointer_block(image: ImageBuffer, filesystem: FilesystemCandidate, fs_block: int) -> list[int]:
-    cache_key = _ufs_pointer_block_cache_key(image, filesystem, fs_block)
-    cached_pointers = _UFS_POINTER_BLOCK_CACHE.get(cache_key)
+    pointer_cache = _ufs_runtime_state(filesystem)['pointer_blocks']
+    cached_pointers = pointer_cache.get(fs_block)
     if cached_pointers is not None:
         return cached_pointers
 
@@ -549,7 +625,7 @@ def read_ufs_pointer_block(image: ImageBuffer, filesystem: FilesystemCandidate, 
     block_size = int(filesystem.details['bsize'])
     raw = image[block_offset:block_offset + block_size]
     pointers = [u32(raw, index * 4) for index in range(int(filesystem.details['nindir']))]
-    _UFS_POINTER_BLOCK_CACHE[cache_key] = pointers
+    pointer_cache[fs_block] = pointers
     return pointers
 
 
@@ -910,10 +986,18 @@ def read_cg_block(image: ImageBuffer, filesystem: FilesystemCandidate, cg: int) 
     return bytearray(image[offset:offset + block_size])
 
 
+def ufs_cg_metadata_size(filesystem: FilesystemCandidate) -> int:
+    return max(
+        UFS_CG_MAGIC_OFFSET + 4,
+        UFS_CG_FREE_OFFSET + ((int(filesystem.details['fpg']) + NBBY - 1) // NBBY),
+    )
+
+
 def write_cg_block(image: bytearray, filesystem: FilesystemCandidate, cg: int, cg_bytes: bytearray) -> None:
     offset = cg_block_offset(filesystem, cg)
-    image[offset:offset + len(cg_bytes)] = cg_bytes
-    _UFS_ALLOCATABLE_CG_BLOCK_CACHE[_ufs_allocatable_cg_block_cache_key(image, filesystem, cg)] = cg_bytes
+    metadata_size = min(len(cg_bytes), ufs_cg_metadata_size(filesystem))
+    image[offset:offset + metadata_size] = cg_bytes[:metadata_size]
+    _ufs_runtime_state(filesystem)['allocatable_cg_blocks'][cg] = cg_bytes
 
 
 def ufs_cg_data_frag_count(fs: dict[str, Any], cg: int) -> int:
@@ -968,20 +1052,20 @@ def initialize_pristine_ufs_cg(image: bytearray, filesystem: FilesystemCandidate
 
 
 def read_allocatable_cg_block(image: bytearray, filesystem: FilesystemCandidate, cg: int) -> bytearray:
-    cache_key = _ufs_allocatable_cg_block_cache_key(image, filesystem, cg)
-    cached = _UFS_ALLOCATABLE_CG_BLOCK_CACHE.get(cache_key)
+    cache = _ufs_runtime_state(filesystem)['allocatable_cg_blocks']
+    cached = cache.get(cg)
     if cached is not None:
         return cached
 
     cg_bytes = read_cg_block(image, filesystem, cg)
     if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) == UFS_CG_MAGIC:
-        _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key] = cg_bytes
+        cache[cg] = cg_bytes
         return cg_bytes
     if _looks_like_pristine_ufs_cg(cg_bytes):
         initialized = initialize_pristine_ufs_cg(image, filesystem, cg)
-        _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key] = initialized
+        cache[cg] = initialized
         return initialized
-    _UFS_ALLOCATABLE_CG_BLOCK_CACHE[cache_key] = cg_bytes
+    cache[cg] = cg_bytes
     return cg_bytes
 
 
@@ -998,8 +1082,9 @@ def _normalize_ufs_cg_block_hint(fs: dict[str, Any], cg: int, cg_ndblk: int, fra
 
 
 def _set_ufs_cg_block_hint(image: ImageBuffer, filesystem: FilesystemCandidate, cg: int, cg_ndblk: int, frags_per_block: int, next_frag: int) -> None:
+    del image
     hint = _normalize_ufs_cg_block_hint(filesystem.details, cg, cg_ndblk, frags_per_block, next_frag)
-    _UFS_CG_BLOCK_ALLOCATION_HINTS[_ufs_cg_block_hint_key(image, filesystem, cg)] = hint
+    _ufs_runtime_state(filesystem)['cg_block_hints'][cg] = hint
 
 
 def _ufs_metadata_normalization_key(image: ImageBuffer, filesystem: FilesystemCandidate) -> tuple[int, int, int]:
@@ -1234,11 +1319,11 @@ def maybe_recompute_ufs_summary_counts(
 
 
 def ensure_ufs_metadata_normalized(image: bytearray, filesystem: FilesystemCandidate) -> None:
-    key = _ufs_metadata_normalization_key(image, filesystem)
-    if key in _UFS_METADATA_NORMALIZATION_STATE:
+    state = _ufs_runtime_state(filesystem)
+    if state.get('metadata_normalized'):
         return
     recompute_ufs_summary_counts(image, filesystem)
-    _UFS_METADATA_NORMALIZATION_STATE.add(key)
+    state['metadata_normalized'] = True
 
 
 def adjust_superblock_free_blocks(image: bytearray, filesystem: FilesystemCandidate, delta: int) -> None:
@@ -1379,7 +1464,7 @@ def allocate_ufs_block(image: bytearray, filesystem: FilesystemCandidate, inode_
             cg,
             cg_ndblk,
             frags_per_block,
-            _UFS_CG_BLOCK_ALLOCATION_HINTS.get(_ufs_cg_block_hint_key(image, filesystem, cg)),
+            _ufs_runtime_state(filesystem)['cg_block_hints'].get(cg),
         )
         for frag_range_start, frag_range_stop in ((start_frag, last_start_frag + 1), (data_start_frag, start_frag)):
             for frag_index in range(frag_range_start, frag_range_stop, frags_per_block):
@@ -1426,7 +1511,7 @@ def allocate_ufs_fragments(image: bytearray, filesystem: FilesystemCandidate, in
             cg,
             cg_ndblk,
             frags_per_block,
-            _UFS_CG_BLOCK_ALLOCATION_HINTS.get(_ufs_cg_block_hint_key(image, filesystem, cg)),
+            _ufs_runtime_state(filesystem)['cg_block_hints'].get(cg),
         )
         for frag_range_start, frag_range_stop in ((start_frag, last_start_frag + 1), (data_start_frag, start_frag)):
             for frag_index in range(frag_range_start, frag_range_stop, frags_per_block):
@@ -1527,7 +1612,7 @@ def write_ufs_pointer_block(image: bytearray, filesystem: FilesystemCandidate, f
     for index, pointer in enumerate(cached_pointers):
         raw[index * 4:(index + 1) * 4] = int(pointer).to_bytes(4, 'little', signed=False)
     image[block_offset:block_offset + block_size] = raw
-    _UFS_POINTER_BLOCK_CACHE[_ufs_pointer_block_cache_key(image, filesystem, fs_block)] = cached_pointers
+    _ufs_runtime_state(filesystem)['pointer_blocks'][fs_block] = cached_pointers
 
 
 def _get_ufs_pointer_block_cache_entry(
@@ -1742,13 +1827,12 @@ def read_ufs_data_range(
     block_size = int(filesystem.details['bsize'])
     end_offset = offset + size
     data = bytearray()
-    for block_index, fs_block in enumerate(data_blocks):
+    start_block = max(0, offset // block_size)
+    end_block = min(len(data_blocks), (end_offset + block_size - 1) // block_size)
+    for block_index in range(start_block, end_block):
+        fs_block = data_blocks[block_index]
         logical_start = block_index * block_size
         logical_end = logical_start + block_size
-        if end_offset <= logical_start:
-            break
-        if offset >= logical_end:
-            continue
 
         block_inner_start = max(0, offset - logical_start)
         block_inner_end = min(block_size, end_offset - logical_start)
@@ -1796,13 +1880,13 @@ def write_ufs_data_range(
 
     block_size = int(filesystem.details['bsize'])
     end_offset = offset + len(data)
-    for block_index, (fs_block, allocation_bytes) in enumerate(zip(data_blocks, allocation_sizes)):
+    start_block = max(0, offset // block_size)
+    end_block = min(len(data_blocks), len(allocation_sizes), (end_offset + block_size - 1) // block_size)
+    for block_index in range(start_block, end_block):
+        fs_block = data_blocks[block_index]
+        allocation_bytes = allocation_sizes[block_index]
         logical_start = block_index * block_size
         logical_end = logical_start + block_size
-        if end_offset <= logical_start:
-            break
-        if offset >= logical_end:
-            continue
 
         block_inner_start = max(0, offset - logical_start)
         block_inner_end = min(block_size, end_offset - logical_start, allocation_bytes)
@@ -1828,13 +1912,13 @@ def zero_ufs_data_range(
 
     block_size = int(filesystem.details['bsize'])
     end_offset = offset + size
-    for block_index, (fs_block, allocation_bytes) in enumerate(zip(data_blocks, allocation_sizes)):
+    start_block = max(0, offset // block_size)
+    end_block = min(len(data_blocks), len(allocation_sizes), (end_offset + block_size - 1) // block_size)
+    for block_index in range(start_block, end_block):
+        fs_block = data_blocks[block_index]
+        allocation_bytes = allocation_sizes[block_index]
         logical_start = block_index * block_size
         logical_end = logical_start + block_size
-        if end_offset <= logical_start:
-            break
-        if offset >= logical_end:
-            continue
 
         block_inner_start = max(0, offset - logical_start)
         block_inner_end = min(block_size, end_offset - logical_start, allocation_bytes)
@@ -1989,7 +2073,12 @@ def apply_ufs_inode_write(
 
     current_data_blocks = list(current_data_blocks) if current_data_blocks is not None else ufs_inode_data_blocks(image, filesystem, inode)
     current_allocation_sizes = list(current_allocation_sizes) if current_allocation_sizes is not None else ufs_allocation_byte_sizes(filesystem.details, old_size)
-    requested_allocation_sizes = ufs_allocation_byte_sizes(filesystem.details, new_size)
+    requested_allocation_sizes = extend_ufs_allocation_byte_sizes(
+        filesystem.details,
+        current_allocation_sizes,
+        old_size,
+        new_size,
+    )
     if requested_allocation_sizes[:len(current_allocation_sizes)] != current_allocation_sizes:
         pointer_blocks = list(current_pointer_blocks) if current_pointer_blocks is not None else ufs_inode_pointer_blocks(image, filesystem, inode)
         original_data_block_count = len(current_data_blocks)
@@ -2060,8 +2149,14 @@ def apply_ufs_inode_write(
             image,
             filesystem,
             inode_number,
-            sum(allocation_bytes // SECTOR_SIZE for allocation_bytes in requested_allocation_sizes)
-            + (new_pointer_block_count * (block_size // SECTOR_SIZE)),
+            int(inode['blocks'])
+            + sum(allocation_bytes // SECTOR_SIZE for allocation_bytes in appended_allocation_sizes)
+            + ((new_pointer_block_count - original_pointer_block_count) * (block_size // SECTOR_SIZE)),
+        )
+        inode['blocks'] = (
+            int(inode['blocks'])
+            + sum(allocation_bytes // SECTOR_SIZE for allocation_bytes in appended_allocation_sizes)
+            + ((new_pointer_block_count - original_pointer_block_count) * (block_size // SECTOR_SIZE))
         )
 
     if offset > old_size:
@@ -2172,6 +2267,31 @@ def add_ufs_directory_entry(
     rounded_length = ((directory_size + UFS_DIRBLKSIZ - 1) // UFS_DIRBLKSIZ) * UFS_DIRBLKSIZ
     if rounded_length == 0:
         rounded_length = UFS_DIRBLKSIZ
+
+    # Fast path for the overwhelmingly common case of appending to a directory
+    # that is being populated sequentially: free space lives in the final
+    # directory block, so try inserting there before falling back to a full
+    # scan. Reading and re-decoding the entire directory on every insert makes
+    # populating a large directory (e.g. /usr/share/man with thousands of
+    # entries) quadratic; this keeps the append case close to O(1).
+    if rounded_length > UFS_DIRBLKSIZ:
+        last_block_offset = rounded_length - UFS_DIRBLKSIZ
+        last_block_span = max(0, min(UFS_DIRBLKSIZ, directory_size - last_block_offset))
+        if last_block_span > 0:
+            last_block_bytes = read_ufs_inode_range(
+                image, filesystem, directory_inode, last_block_offset, last_block_span
+            )
+            try:
+                updated_block = insert_ufs_directory_entry(
+                    last_block_bytes, last_block_span, child_inode_number, entry_name
+                )
+            except ValueError:
+                pass
+            else:
+                return apply_ufs_inode_write(
+                    image, filesystem, directory_inode_number, directory_inode, last_block_offset, updated_block
+                )
+
     directory_bytes = read_ufs_inode_bytes(image, filesystem, directory_inode)
     for block_offset in range(0, rounded_length, UFS_DIRBLKSIZ):
         block_span = max(0, min(UFS_DIRBLKSIZ, directory_size - block_offset))
@@ -2255,6 +2375,43 @@ def create_ufs_file(
         target_path,
         parent_inode_number=parent_inode_number,
     )
+    return create_ufs_file_in_parent(
+        image,
+        filesystem,
+        parent_inode_number,
+        parent_inode,
+        entry_name,
+        file_bytes,
+        target_path=target_path,
+        mode=mode,
+        uid=uid,
+        gid=gid,
+        timestamp=timestamp,
+        recompute_summary=recompute_summary,
+    )
+
+
+def create_ufs_file_in_parent(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    parent_inode_number: int,
+    parent_inode: dict[str, int | list[int]],
+    entry_name: str,
+    file_bytes: bytes,
+    *,
+    target_path: str | None = None,
+    mode: int = 0o644,
+    uid: int = 0,
+    gid: int = 0,
+    timestamp: int = 0,
+    recompute_summary: bool = True,
+    check_existing: bool = True,
+) -> dict[str, int | str]:
+    if not ufs_is_directory(parent_inode):
+        raise SystemExit('error: parent inode is not a UFS directory')
+    if check_existing and lookup_ufs_directory_entry(image, filesystem, parent_inode, entry_name) is not None:
+        label = target_path or entry_name
+        raise SystemExit(f'error: target path {label} already exists inside the ufs filesystem')
     new_inode_number = allocate_ufs_inode(image, filesystem, preferred_inode=parent_inode_number)
     file_type = ufs_file_type(mode) or UFS_IFREG
     permissions = mode & ~UFS_IFMT
@@ -2273,7 +2430,7 @@ def create_ufs_file(
         free_ufs_inode(image, filesystem, new_inode_number)
         raise
     maybe_recompute_ufs_summary_counts(image, filesystem, recompute_summary=recompute_summary)
-    return {'operation': 'create', 'path': target_path, 'inode': new_inode_number, 'size': len(file_bytes)}
+    return {'operation': 'create', 'path': target_path or entry_name, 'inode': new_inode_number, 'size': len(file_bytes)}
 
 
 def create_ufs_special_file(
@@ -2346,6 +2503,41 @@ def make_ufs_directory(
         target_path,
         parent_inode_number=parent_inode_number,
     )
+    return make_ufs_directory_in_parent(
+        image,
+        filesystem,
+        parent_inode_number,
+        parent_inode,
+        entry_name,
+        target_path=target_path,
+        mode=mode,
+        uid=uid,
+        gid=gid,
+        timestamp=timestamp,
+        recompute_summary=recompute_summary,
+    )
+
+
+def make_ufs_directory_in_parent(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    parent_inode_number: int,
+    parent_inode: dict[str, int | list[int]],
+    entry_name: str,
+    *,
+    target_path: str | None = None,
+    mode: int = 0o755,
+    uid: int = 0,
+    gid: int = 0,
+    timestamp: int = 0,
+    recompute_summary: bool = True,
+    check_existing: bool = True,
+) -> dict[str, int | str]:
+    if not ufs_is_directory(parent_inode):
+        raise SystemExit('error: parent inode is not a UFS directory')
+    if check_existing and lookup_ufs_directory_entry(image, filesystem, parent_inode, entry_name) is not None:
+        label = target_path or entry_name
+        raise SystemExit(f'error: target path {label} already exists inside the ufs filesystem')
     new_inode_number = allocate_ufs_inode(image, filesystem, preferred_inode=parent_inode_number, directory=True)
     permissions = mode & ~UFS_IFMT
     initialize_ufs_inode(image, filesystem, new_inode_number, UFS_IFDIR | permissions, uid=uid, gid=gid, nlink=2, timestamp=timestamp)
@@ -2371,7 +2563,7 @@ def make_ufs_directory(
         free_ufs_inode(image, filesystem, new_inode_number, directory=True)
         raise
     maybe_recompute_ufs_summary_counts(image, filesystem, recompute_summary=recompute_summary)
-    return {'operation': 'mkdir', 'path': target_path, 'inode': new_inode_number}
+    return {'operation': 'mkdir', 'path': target_path or entry_name, 'inode': new_inode_number}
 
 
 def unlink_ufs_path(image: bytearray, filesystem: FilesystemCandidate, target_path: str) -> dict[str, int | str]:
@@ -2526,6 +2718,46 @@ def symlink_ufs_path(
         parent_inode_number=parent_inode_number,
         recompute_summary=recompute_summary,
     )
+
+
+def rename_ufs_in_parent(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    source_parent_inode_number: int,
+    source_parent_inode: dict[str, int | list[int]],
+    source_name: str,
+    source_inode_number: int,
+    source_inode: dict[str, int | list[int]],
+    target_parent_inode_number: int,
+    target_parent_inode: dict[str, int | list[int]],
+    target_name: str,
+    *,
+    check_existing: bool = True,
+) -> dict[str, int | str]:
+    if source_parent_inode_number == target_parent_inode_number and source_name == target_name:
+        return {'operation': 'rename', 'source_path': source_name, 'target_path': target_name, 'inode': source_inode_number}
+
+    if check_existing:
+        existing_target = lookup_ufs_directory_entry(image, filesystem, target_parent_inode, target_name)
+        if existing_target is not None:
+            raise SystemExit('error: target already exists')
+
+    add_ufs_directory_entry(image, filesystem, target_parent_inode_number, target_parent_inode, target_name, source_inode_number)
+    refreshed_source_parent_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, source_parent_inode_number)
+    if refreshed_source_parent_inode is None:
+        raise SystemExit(f'error: failed to refresh source parent inode {source_parent_inode_number}')
+    source_parent_inode = refreshed_source_parent_inode
+    if source_parent_inode_number == target_parent_inode_number:
+        target_parent_inode = refreshed_source_parent_inode
+    if ufs_is_directory(source_inode) and source_parent_inode_number != target_parent_inode_number:
+        refreshed_source_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, source_inode_number)
+        if refreshed_source_inode is None:
+            raise SystemExit(f'error: failed to refresh source directory inode {source_inode_number}')
+        update_ufs_directory_dotdot(image, filesystem, source_inode_number, refreshed_source_inode, target_parent_inode_number)
+        write_ufs_inode_nlink(image, filesystem, source_parent_inode_number, max(0, int(source_parent_inode['nlink']) - 1))
+        write_ufs_inode_nlink(image, filesystem, target_parent_inode_number, int(target_parent_inode['nlink']) + 1)
+    delete_ufs_directory_entry(image, filesystem, source_parent_inode_number, source_parent_inode, source_name)
+    return {'operation': 'rename', 'source_path': source_name, 'target_path': target_name, 'inode': source_inode_number}
 
 
 def rename_ufs_path(image: bytearray, filesystem: FilesystemCandidate, source_path: str, target_path: str) -> dict[str, int | str]:

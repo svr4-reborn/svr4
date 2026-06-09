@@ -8,7 +8,7 @@ from typing import Any
 
 from host_tools.fs.bfs import format_bfs_filesystem
 
-from .create import RawDiskGeometry, create_raw_image_skeleton
+from .create import DISK_ADDRESSING_CHS, DISK_ADDRESSING_LBA28, RawDiskGeometry, create_raw_image_skeleton
 from .inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes, resolve_guest_visible_sector
 from .structures import DiskImageReport, MbrInfo, PartitionEntry, PdInfo, SliceFilesystem, VtocInfo, VtocPartition
 from .svr4 import PARTITION_TAG_NAMES, partition_tag_name
@@ -36,6 +36,12 @@ def build_parser() -> argparse.ArgumentParser:
     create_parser.add_argument('--sectors', type=int, required=True, help='Sectors per track.')
     create_parser.add_argument('--unix-partition-start', type=int, default=1)
     create_parser.add_argument('--unix-partition-size', type=int, help='Size of the UNIX partition in sectors. Defaults to the rest of the disk.')
+    create_parser.add_argument(
+        '--disk-addressing',
+        choices=[DISK_ADDRESSING_CHS, DISK_ADDRESSING_LBA28],
+        default=DISK_ADDRESSING_CHS,
+        help='Disk addressing mode for validation and MBR CHS fields.',
+    )
     create_parser.add_argument('--volume', default='SVR4')
     create_parser.add_argument(
         '--slice',
@@ -116,6 +122,7 @@ def create_skeleton(args: argparse.Namespace) -> None:
         unix_partition_size=unix_partition_size,
         volume=args.volume,
         slices=slices,
+        disk_addressing=args.disk_addressing,
     )
     print(f'Created raw disk skeleton at {Path(args.output).resolve()}')
 

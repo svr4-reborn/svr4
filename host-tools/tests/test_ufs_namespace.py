@@ -256,6 +256,30 @@ class UFSNamespaceTests(unittest.TestCase):
         self.assertEqual(ufs_module.u32(image, UFS_FS_CSTOTAL_NIFREE_OFFSET), 60)
         self.assertEqual(ufs_module.u32(image, UFS_FS_CSTOTAL_NFFREE_OFFSET), 6)
 
+    def test_incremental_allocation_sizes_match_full_calculation(self) -> None:
+        _, filesystem = build_multicg_test_filesystem_with_pristine_second_group()
+        fs = filesystem.details
+        sizes = [
+            0,
+            1,
+            511,
+            512,
+            4095,
+            4096,
+            11 * 4096,
+            (12 * 4096) - 1,
+            12 * 4096,
+            (12 * 4096) + 1,
+            20 * 4096,
+        ]
+
+        current = ufs_module.ufs_allocation_byte_sizes(fs, 0)
+        old_size = 0
+        for new_size in sizes[1:]:
+            current = ufs_module.extend_ufs_allocation_byte_sizes(fs, current, old_size, new_size)
+            self.assertEqual(current, ufs_module.ufs_allocation_byte_sizes(fs, new_size))
+            old_size = new_size
+
     def test_sequential_writes_do_not_rescan_from_group_start(self) -> None:
         image, filesystem = build_multicg_test_filesystem_with_pristine_second_group()
 
@@ -317,6 +341,23 @@ class UFSNamespaceTests(unittest.TestCase):
 
         self.assertLessEqual(counts['read_pointer_block'], 1)
         self.assertLessEqual(counts['write_pointer_block'], 2)
+
+    def test_runtime_caches_do_not_leak_between_formatted_images(self) -> None:
+        cylinder_bytes = 16 * 63 * 512
+        image_size = cylinder_bytes * 32
+
+        for index in range(2):
+            image = bytearray(image_size)
+            filesystem = ufs_module.format_ufs_filesystem(
+                image,
+                timestamp=index + 1,
+                block_size=4096,
+                bytes_per_inode=8192,
+                tracks_per_cylinder=16,
+                sectors_per_track=63,
+            )
+            create_ufs_file(image, filesystem, f'/cache-{index}.txt', b'ok', recompute_summary=False)
+            self.assertIsNotNone(resolve_ufs_path(bytes(image), filesystem, f'/cache-{index}.txt'))
 
     def test_backend_wrapper(self) -> None:
         image, filesystem = build_test_filesystem()

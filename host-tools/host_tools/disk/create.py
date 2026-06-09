@@ -14,6 +14,8 @@ MAX_ALTENTS = 253
 MAX_CHS_CYLINDERS = 1024
 MAX_KERNEL_CHS_HEADS = 16
 MAX_CHS_SECTORS_PER_TRACK = 63
+DISK_ADDRESSING_CHS = 'chs'
+DISK_ADDRESSING_LBA28 = 'lba28'
 ACTIVE_PARTITION_CHAINLOADER_MBR = bytes.fromhex(
     '31c0fa8ed0bc007c8ec08ed8fb89e6bf0006b90002fcf3a4ea1d060000b004bebe07803c80740c83c610fec875f4beac06eb3289f78b148b4c02bd0500bb007cb80102cd13730c31c0cd134d75efbe9406eb12813efe7d55aa750789feea007c0000be7306ac08c07406b40ecd10ebf5fbebfe496e76616c696420706172746974696f6e20626f6f74207369676e6174757265004572726f722072656164696e6720626f6f747374726170004e6f2061637469766520706172746974696f6e206f6e2068617264206469736b00'
 )
@@ -30,10 +32,12 @@ class RawDiskGeometry:
         return self.cylinders * self.heads * self.sectors_per_track
 
 
-def validate_geometry(geometry: RawDiskGeometry) -> None:
+def validate_geometry(geometry: RawDiskGeometry, disk_addressing: str = DISK_ADDRESSING_CHS) -> None:
     if geometry.cylinders <= 0 or geometry.heads <= 0 or geometry.sectors_per_track <= 0:
         raise SystemExit('error: disk geometry values must all be positive')
-    if geometry.cylinders > MAX_CHS_CYLINDERS:
+    if disk_addressing not in {DISK_ADDRESSING_CHS, DISK_ADDRESSING_LBA28}:
+        raise SystemExit(f'error: unsupported disk addressing mode {disk_addressing!r}')
+    if disk_addressing == DISK_ADDRESSING_CHS and geometry.cylinders > MAX_CHS_CYLINDERS:
         raise SystemExit(f'error: disk geometry exceeds CHS cylinder limit ({geometry.cylinders} > {MAX_CHS_CYLINDERS})')
     if geometry.heads > MAX_KERNEL_CHS_HEADS:
         raise SystemExit(f'error: disk geometry exceeds kernel head limit ({geometry.heads} > {MAX_KERNEL_CHS_HEADS})')
@@ -80,11 +84,15 @@ def validate_vtoc_partitions(
             raise SystemExit(f'error: slice {partition.index} exceeds the UNIX partition bounds')
 
 
-def encode_chs(lba: int, geometry: RawDiskGeometry) -> bytes:
+def encode_chs(lba: int, geometry: RawDiskGeometry, *, saturate: bool = False) -> bytes:
     if lba <= 0:
         return bytes([0, 0, 0])
     if lba > max_chs_lba(geometry):
-        raise SystemExit(f'error: LBA {lba} is outside the CHS-addressable disk geometry')
+        if not saturate:
+            raise SystemExit(f'error: LBA {lba} is outside the CHS-addressable disk geometry')
+        lba = max_chs_lba(geometry)
+    if saturate:
+        lba = min(lba, (MAX_CHS_CYLINDERS * geometry.heads * geometry.sectors_per_track) - 1)
     sectors_per_cylinder = geometry.heads * geometry.sectors_per_track
     cylinder = lba // sectors_per_cylinder
     temp = lba % sectors_per_cylinder
@@ -94,14 +102,14 @@ def encode_chs(lba: int, geometry: RawDiskGeometry) -> bytes:
     return bytes([head & 0xFF, sector_byte & 0xFF, cylinder & 0xFF])
 
 
-def serialize_partition_entry(partition: PartitionEntry, geometry: RawDiskGeometry) -> bytes:
+def serialize_partition_entry(partition: PartitionEntry, geometry: RawDiskGeometry, *, saturate_chs: bool = False) -> bytes:
     boot_indicator = 0x80 if partition.bootable else 0x00
     return b''.join(
         [
             bytes([boot_indicator]),
-            encode_chs(partition.start_lba, geometry),
+            encode_chs(partition.start_lba, geometry, saturate=saturate_chs),
             bytes([partition.partition_type]),
-            encode_chs(partition.start_lba + max(partition.sector_count - 1, 0), geometry),
+            encode_chs(partition.start_lba + max(partition.sector_count - 1, 0), geometry, saturate=saturate_chs),
             partition.start_lba.to_bytes(4, 'little', signed=False),
             partition.sector_count.to_bytes(4, 'little', signed=False),
         ]
@@ -114,6 +122,7 @@ def build_mbr(
     unix_partition_size: int,
     *,
     boot_code: bytes | None = None,
+    disk_addressing: str = DISK_ADDRESSING_CHS,
 ) -> bytes:
     sector = bytearray(SECTOR_SIZE)
     if boot_code is not None:
@@ -131,6 +140,7 @@ def build_mbr(
             end_chs=(0, 0, 0),
         ),
         geometry,
+        saturate_chs=(disk_addressing == DISK_ADDRESSING_LBA28),
     )
     sector[510:512] = (0xAA55).to_bytes(2, 'little', signed=False)
     return bytes(sector)
@@ -196,47 +206,58 @@ def create_raw_image_skeleton(
     volume: str,
     slices: list[VtocPartition],
     mbr_boot_code: bytes | None = None,
+    disk_addressing: str = DISK_ADDRESSING_CHS,
 ) -> None:
-    validate_geometry(geometry)
+    validate_geometry(geometry, disk_addressing=disk_addressing)
     validate_unix_partition(geometry.total_sectors, unix_partition_start, unix_partition_size)
     validate_vtoc_partitions(unix_partition_start, unix_partition_size, slices)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    image = bytearray(geometry.total_sectors * SECTOR_SIZE)
-    image[0:SECTOR_SIZE] = build_mbr(
-        geometry,
-        unix_partition_start,
-        unix_partition_size,
-        boot_code=mbr_boot_code,
-    )
+    output_path.write_bytes(b'')
+    with output_path.open('r+b') as handle:
+        handle.truncate(geometry.total_sectors * SECTOR_SIZE)
+        handle.seek(0)
+        handle.write(
+            build_mbr(
+                geometry,
+                unix_partition_start,
+                unix_partition_size,
+                boot_code=mbr_boot_code,
+                disk_addressing=disk_addressing,
+            )
+        )
 
-    vtoc_ptr = (HDPDLOC * SECTOR_SIZE) + 100
-    vtoc_len = 316
-    alt_ptr = 30 * SECTOR_SIZE
-    alt_info = build_empty_alt_info()
-    alt_len = len(alt_info)
+        vtoc_ptr = (HDPDLOC * SECTOR_SIZE) + 100
+        vtoc_len = 316
+        alt_ptr = 30 * SECTOR_SIZE
+        alt_info = build_empty_alt_info()
+        alt_len = len(alt_info)
 
-    pdinfo_sector = unix_partition_start + HDPDLOC
-    image[pdinfo_sector * SECTOR_SIZE:(pdinfo_sector + 1) * SECTOR_SIZE] = build_pdinfo(
-        geometry,
-        logical_sector_0=unix_partition_start,
-        vtoc_ptr=vtoc_ptr,
-        vtoc_len=vtoc_len,
-        alt_ptr=alt_ptr,
-        alt_len=alt_len,
-    )
-    vtoc_sector = unix_partition_start + (vtoc_ptr // SECTOR_SIZE)
-    vtoc_offset = vtoc_ptr % SECTOR_SIZE
-    vtoc_block = build_vtoc(volume, slices)
-    image_offset = (vtoc_sector * SECTOR_SIZE) + vtoc_offset
-    if image_offset + len(vtoc_block) > len(image):
-        raise SystemExit('error: VTOC metadata does not fit inside the declared disk geometry')
-    image[image_offset:image_offset + len(vtoc_block)] = vtoc_block
+        pdinfo_sector = unix_partition_start + HDPDLOC
+        handle.seek(pdinfo_sector * SECTOR_SIZE)
+        handle.write(
+            build_pdinfo(
+                geometry,
+                logical_sector_0=unix_partition_start,
+                vtoc_ptr=vtoc_ptr,
+                vtoc_len=vtoc_len,
+                alt_ptr=alt_ptr,
+                alt_len=alt_len,
+            )
+        )
+        vtoc_sector = unix_partition_start + (vtoc_ptr // SECTOR_SIZE)
+        vtoc_offset = vtoc_ptr % SECTOR_SIZE
+        vtoc_block = build_vtoc(volume, slices)
+        image_offset = (vtoc_sector * SECTOR_SIZE) + vtoc_offset
+        if image_offset + len(vtoc_block) > geometry.total_sectors * SECTOR_SIZE:
+            raise SystemExit('error: VTOC metadata does not fit inside the declared disk geometry')
+        handle.seek(image_offset)
+        handle.write(vtoc_block)
 
-    alt_sector = unix_partition_start + (alt_ptr // SECTOR_SIZE)
-    alt_offset = alt_ptr % SECTOR_SIZE
-    alt_image_offset = (alt_sector * SECTOR_SIZE) + alt_offset
-    if alt_image_offset + len(alt_info) > len(image):
-        raise SystemExit('error: alternates metadata does not fit inside the declared disk geometry')
-    image[alt_image_offset:alt_image_offset + len(alt_info)] = alt_info
-    output_path.write_bytes(image)
+        alt_sector = unix_partition_start + (alt_ptr // SECTOR_SIZE)
+        alt_offset = alt_ptr % SECTOR_SIZE
+        alt_image_offset = (alt_sector * SECTOR_SIZE) + alt_offset
+        if alt_image_offset + len(alt_info) > geometry.total_sectors * SECTOR_SIZE:
+            raise SystemExit('error: alternates metadata does not fit inside the declared disk geometry')
+        handle.seek(alt_image_offset)
+        handle.write(alt_info)

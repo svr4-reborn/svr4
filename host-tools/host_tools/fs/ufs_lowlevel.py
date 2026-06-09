@@ -129,6 +129,58 @@ def detect_ufs(image: ImageBuffer) -> list[FilesystemCandidate]:
     return sorted(candidates_by_key.values(), key=_ufs_candidate_rank)
 
 
+def detect_ufs_at_start(image: ImageBuffer, fs_start: int = 0) -> FilesystemCandidate | None:
+    super_offset = fs_start + UFS_SB_OFFSET
+    if super_offset + UFS_SB_SIZE > len(image):
+        return None
+    if u32(image, super_offset + UFS_FS_MAGIC_OFFSET) != UFS_MAGIC:
+        return None
+    block_size = u32(image, super_offset + UFS_FS_BSIZE_OFFSET)
+    fragment_size = u32(image, super_offset + UFS_FS_FSIZE_OFFSET)
+    inodes_per_block = u32(image, super_offset + UFS_FS_INOPB_OFFSET)
+    inodes_per_group = u32(image, super_offset + UFS_FS_IPG_OFFSET)
+    fragments_per_group = u32(image, super_offset + UFS_FS_FPG_OFFSET)
+    if block_size < 4096 or block_size > UFS_SB_SIZE:
+        return None
+    if fragment_size < SECTOR_SIZE or fragment_size > block_size:
+        return None
+    if inodes_per_block == 0 or inodes_per_group == 0 or fragments_per_group == 0:
+        return None
+    details: dict[str, int | str] = {
+        'bsize': block_size,
+        'fsize': fragment_size,
+        'frag': u32(image, super_offset + UFS_FS_FRAG_OFFSET),
+        'dsize': u32(image, super_offset + UFS_FS_DSIZE_OFFSET),
+        'ipg': inodes_per_group,
+        'fpg': fragments_per_group,
+        'inopb': inodes_per_block,
+        'fsbtodb': u32(image, super_offset + UFS_FS_FSBTODB_OFFSET),
+        'cgoffset': u32(image, super_offset + UFS_FS_CGOFFSET_OFFSET),
+        'cgmask': u32(image, super_offset + UFS_FS_CGMASK_OFFSET),
+        'cblkno': u32(image, super_offset + UFS_FS_CBLKNO_OFFSET),
+        'iblkno': u32(image, super_offset + UFS_FS_IBLKNO_OFFSET),
+        'dblkno': u32(image, super_offset + UFS_FS_DBLKNO_OFFSET),
+        'ncg': u32(image, super_offset + UFS_FS_NCG_OFFSET),
+        'minfree': u32(image, super_offset + UFS_FS_MINFREE_OFFSET),
+        'fragshift': i32(image, super_offset + 96),
+        'nindir': u32(image, super_offset + UFS_FS_NINDIR_OFFSET),
+        'nspf': u32(image, super_offset + UFS_FS_NSPF_OFFSET),
+        'csaddr': u32(image, super_offset + UFS_FS_CSADDR_OFFSET),
+        'cssize': u32(image, super_offset + UFS_FS_CSSIZE_OFFSET),
+        'nsect': u32(image, super_offset + UFS_FS_NSECT_OFFSET),
+        'spc': u32(image, super_offset + UFS_FS_SPC_OFFSET),
+        'ncyl': u32(image, super_offset + UFS_FS_NCYL_OFFSET),
+        'cpg': u32(image, super_offset + UFS_FS_CPG_OFFSET),
+    }
+    return FilesystemCandidate(
+        kind='ufs',
+        start_offset=fs_start,
+        super_offset=super_offset,
+        block_size=block_size,
+        details=details,
+    )
+
+
 def _ufs_candidate_rank(candidate: FilesystemCandidate) -> tuple[int, int]:
     return (
         candidate.start_offset,

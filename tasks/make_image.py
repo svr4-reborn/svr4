@@ -1,13 +1,14 @@
 # pyright: reportMissingImports=false
 
 import argparse
-from dataclasses import dataclass
+from contextlib import contextmanager
 import importlib
 import json
 import os
 import re
+import signal
 import struct
-import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -23,45 +24,42 @@ if str(HOST_TOOLS_ROOT) not in sys.path:
 _disk_create = importlib.import_module('host_tools.disk.create')
 _disk_inspect = importlib.import_module('host_tools.disk.inspect')
 _disk_structures = importlib.import_module('host_tools.disk.structures')
+_fs_disk_backed = importlib.import_module('host_tools.fs.disk_backed')
 _fs_bfs = importlib.import_module('host_tools.fs.bfs')
 _fs_ufs = importlib.import_module('host_tools.fs.ufs')
+_fs_ufs_fuse = importlib.import_module('host_tools.fs.ufs_fuse')
 
 RawDiskGeometry = _disk_create.RawDiskGeometry
 create_raw_image_skeleton = _disk_create.create_raw_image_skeleton
+build_mbr = _disk_create.build_mbr
 ACTIVE_PARTITION_CHAINLOADER_MBR = _disk_create.ACTIVE_PARTITION_CHAINLOADER_MBR
 DISK_ADDRESSING_CHS = _disk_create.DISK_ADDRESSING_CHS
 DISK_ADDRESSING_LBA28 = _disk_create.DISK_ADDRESSING_LBA28
 MAX_CHS_CYLINDERS = _disk_create.MAX_CHS_CYLINDERS
 MAX_KERNEL_CHS_HEADS = _disk_create.MAX_KERNEL_CHS_HEADS
 MAX_CHS_SECTORS_PER_TRACK = _disk_create.MAX_CHS_SECTORS_PER_TRACK
+read_sector = _disk_inspect.read_sector
 read_slice_bytes = _disk_inspect.read_slice_bytes
+inspect_disk_metadata = _disk_inspect.inspect_disk_metadata
 VtocPartition = _disk_structures.VtocPartition
 HDPDLOC = _disk_structures.HDPDLOC
+DiskBackedSlice = _fs_disk_backed.DiskBackedSlice
 format_bfs_filesystem = _fs_bfs.format_bfs_filesystem
-allocate_ufs_inode = _fs_ufs.allocate_ufs_inode
-apply_ufs_inode_replacement = _fs_ufs.apply_ufs_inode_replacement
-build_ufs_directory_block = _fs_ufs.build_ufs_directory_block
+detect_bfs = _fs_bfs.detect_bfs
 create_ufs_special_file = _fs_ufs.create_ufs_special_file
-encode_ufs_directory_entry = _fs_ufs.encode_ufs_directory_entry
 format_ufs_filesystem = _fs_ufs.format_ufs_filesystem
-initialize_ufs_inode = _fs_ufs.initialize_ufs_inode
-iter_ufs_directory_records = _fs_ufs.iter_ufs_directory_records
+detect_ufs_at_start = _fs_ufs.detect_ufs_at_start
 link_ufs_path = _fs_ufs.link_ufs_path
 make_ufs_directory = _fs_ufs.make_ufs_directory
-read_ufs_inode = _fs_ufs.read_ufs_inode
 resolve_ufs_path = _fs_ufs.resolve_ufs_path
-ufs_dirsiz = _fs_ufs.ufs_dirsiz
 write_ufs_inode_mode = _fs_ufs.write_ufs_inode_mode
-write_ufs_inode_nlink = _fs_ufs.write_ufs_inode_nlink
-UFS_DIRBLKSIZ = _fs_ufs.UFS_DIRBLKSIZ
 UFS_IFBLK = _fs_ufs.UFS_IFBLK
 UFS_IFCHR = _fs_ufs.UFS_IFCHR
 UFS_IFDIR = _fs_ufs.UFS_IFDIR
-UFS_IFLNK = _fs_ufs.UFS_IFLNK
 UFS_IFMT = _fs_ufs.UFS_IFMT
-UFS_IFREG = _fs_ufs.UFS_IFREG
 UFS_ROOT_INODE = _fs_ufs.UFS_ROOT_INODE
 refresh_ufs_summary_layout = _fs_ufs.refresh_ufs_summary_layout
+UFSVolume = _fs_ufs_fuse.UFSVolume
 
 
 EXPECTED_BOOT_FILES = ('unix', 'hdboot')
@@ -104,16 +102,6 @@ _NETWORK_NODE_MODULES = (
 )
 
 
-@dataclass
-class _BulkUFSDirectoryState:
-    guest_path: str
-    inode_number: int
-    nlink: int
-    directory_bytes: bytearray
-    last_record_offset: int
-    last_record_minimal_length: int
-    last_record_length: int
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Build the hard drive image for SVR4')
     parser.add_argument('--image', required=True, help='Path to the output image file')
@@ -134,7 +122,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--stand-start-sector', default=64, help='Absolute disk sector where the stand slice starts (default: 64)')
     parser.add_argument('--root-align-sectors', default=2048, help='Alignment for the root slice start in sectors (default: 2048)')
     parser.add_argument('--allow-missing-boot-files', action='store_true', help='Build the image even if expected /stand boot files are missing')
-    parser.add_argument('--reuse-existing', action='store_true', help='Reuse the existing image file if it exists')
+    parser.add_argument('--force-reformat', action='store_true', help='Always recreate and reformat the image instead of reusing a valid existing image')
+    parser.add_argument('--no-reuse-existing', action='store_true', help='Alias for --force-reformat')
+    parser.add_argument('--reuse-existing', action='store_true', help=argparse.SUPPRESS)
     return parser
 
 
@@ -311,244 +301,6 @@ def _collect_boot_files(stand_dir: Path) -> tuple[list[tuple[str, bytes]], list[
 
     missing = [name for name in EXPECTED_BOOT_FILES if name not in present_names]
     return boot_files, present_names, missing
-
-
-def _join_ufs_path(parent_path: str, name: str) -> str:
-    if parent_path == '/':
-        return '/' + name
-    return parent_path + '/' + name
-
-
-def _build_bulk_ufs_directory_state(guest_path: str, inode_number: int, parent_inode_number: int) -> _BulkUFSDirectoryState:
-    directory_bytes = bytearray(build_ufs_directory_block(inode_number, parent_inode_number))
-    records = iter_ufs_directory_records(directory_bytes, len(directory_bytes))
-    if not records:
-        raise SystemExit(f'error: failed to initialize bulk UFS directory state for {guest_path}')
-    last_record = records[-1]
-    return _BulkUFSDirectoryState(
-        guest_path=guest_path,
-        inode_number=inode_number,
-        nlink=2,
-        directory_bytes=directory_bytes,
-        last_record_offset=last_record.offset,
-        last_record_minimal_length=ufs_dirsiz(last_record.name),
-        last_record_length=last_record.record_length,
-    )
-
-
-def _append_bulk_directory_entry(directory_state: _BulkUFSDirectoryState, child_inode_number: int, entry_name: str) -> None:
-    needed_length = ufs_dirsiz(entry_name)
-    if needed_length > UFS_DIRBLKSIZ:
-        raise SystemExit(f'error: UFS path component {entry_name!r} exceeds the directory block size')
-    remaining_length = directory_state.last_record_length - directory_state.last_record_minimal_length
-    if remaining_length < needed_length:
-        directory_state.last_record_offset = len(directory_state.directory_bytes)
-        directory_state.last_record_minimal_length = needed_length
-        directory_state.last_record_length = UFS_DIRBLKSIZ
-        directory_state.directory_bytes.extend(encode_ufs_directory_entry(child_inode_number, entry_name, UFS_DIRBLKSIZ))
-        return
-
-    record_length_offset = directory_state.last_record_offset + 4
-    directory_state.directory_bytes[record_length_offset:record_length_offset + 2] = directory_state.last_record_minimal_length.to_bytes(2, 'little', signed=False)
-    entry_offset = directory_state.last_record_offset + directory_state.last_record_minimal_length
-    directory_state.directory_bytes[entry_offset:entry_offset + remaining_length] = encode_ufs_directory_entry(
-        child_inode_number,
-        entry_name,
-        remaining_length,
-    )
-    directory_state.last_record_offset = entry_offset
-    directory_state.last_record_minimal_length = needed_length
-    directory_state.last_record_length = remaining_length
-
-
-def _allocate_initialized_ufs_inode(
-    image: bytearray,
-    filesystem: Any,
-    parent_inode_number: int,
-    mode: int,
-    *,
-    nlink: int = 1,
-    directory: bool = False,
-) -> int:
-    inode_number = allocate_ufs_inode(
-        image,
-        filesystem,
-        preferred_inode=parent_inode_number,
-        directory=directory,
-    )
-    initialize_ufs_inode(image, filesystem, inode_number, mode, nlink=nlink)
-    return inode_number
-
-
-def _create_bulk_ufs_file(
-    image: bytearray,
-    filesystem: Any,
-    parent_state: _BulkUFSDirectoryState,
-    entry_name: str,
-    file_bytes: bytes,
-    *,
-    mode: int,
-) -> None:
-    guest_path = _join_ufs_path(parent_state.guest_path, entry_name)
-    inode_number = _allocate_initialized_ufs_inode(
-        image,
-        filesystem,
-        parent_state.inode_number,
-        UFS_IFREG | mode,
-    )
-    inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, inode_number)
-    if inode is None:
-        raise SystemExit(f'error: failed to re-read newly allocated UFS inode {inode_number}')
-    apply_ufs_inode_replacement(image, filesystem, inode_number, inode, file_bytes, target_path=guest_path)
-    _append_bulk_directory_entry(parent_state, inode_number, entry_name)
-
-
-def _create_bulk_ufs_symlink(
-    image: bytearray,
-    filesystem: Any,
-    parent_state: _BulkUFSDirectoryState,
-    entry_name: str,
-    target: str,
-) -> None:
-    guest_path = _join_ufs_path(parent_state.guest_path, entry_name)
-    inode_number = _allocate_initialized_ufs_inode(
-        image,
-        filesystem,
-        parent_state.inode_number,
-        UFS_IFLNK | 0o777,
-    )
-    inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, inode_number)
-    if inode is None:
-        raise SystemExit(f'error: failed to re-read newly allocated UFS inode {inode_number}')
-    apply_ufs_inode_replacement(image, filesystem, inode_number, inode, target.encode('ascii'), target_path=guest_path)
-    _append_bulk_directory_entry(parent_state, inode_number, entry_name)
-
-
-def _create_bulk_ufs_directory(
-    image: bytearray,
-    filesystem: Any,
-    parent_state: _BulkUFSDirectoryState,
-    entry_name: str,
-    *,
-    mode: int,
-) -> _BulkUFSDirectoryState:
-    guest_path = _join_ufs_path(parent_state.guest_path, entry_name)
-    inode_number = _allocate_initialized_ufs_inode(
-        image,
-        filesystem,
-        parent_state.inode_number,
-        UFS_IFDIR | mode,
-        nlink=2,
-        directory=True,
-    )
-    parent_state.nlink += 1
-    _append_bulk_directory_entry(parent_state, inode_number, entry_name)
-    return _build_bulk_ufs_directory_state(guest_path, inode_number, parent_state.inode_number)
-
-
-def _flush_bulk_ufs_directories(
-    image: bytearray,
-    filesystem: Any,
-    directory_states: dict[Path, _BulkUFSDirectoryState],
-) -> None:
-    for relative_path in sorted(directory_states, key=lambda path: (len(path.parts), path.as_posix())):
-        state = directory_states[relative_path]
-        inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, state.inode_number)
-        if inode is None:
-            raise SystemExit(f'error: failed to read directory inode {state.inode_number} for {state.guest_path}')
-        apply_ufs_inode_replacement(
-            image,
-            filesystem,
-            state.inode_number,
-            inode,
-            bytes(state.directory_bytes),
-            target_path=state.guest_path,
-        )
-        write_ufs_inode_nlink(image, filesystem, state.inode_number, state.nlink)
-
-
-def _populate_root_slice(image: bytearray, filesystem: Any, sysroot: Path) -> None:
-    directory_states: dict[Path, _BulkUFSDirectoryState] = {
-        Path('.'): _build_bulk_ufs_directory_state('/', UFS_ROOT_INODE, UFS_ROOT_INODE)
-    }
-
-    for dirpath, dirnames, filenames in os.walk(sysroot, topdown=True, followlinks=False):
-        dir_path = Path(dirpath)
-        relative_dir = dir_path.relative_to(sysroot)
-        dirnames.sort()
-        filenames.sort()
-
-        current_state = directory_states.get(relative_dir)
-        if current_state is None:
-            raise SystemExit(f'error: missing bulk UFS directory state for /{relative_dir.as_posix()}')
-
-        if relative_dir == Path('stand'):
-            dirnames[:] = []
-            continue
-
-        for directory_name in dirnames:
-            relative_path = relative_dir / directory_name
-            if relative_path == Path('stand'):
-                directory_states[relative_path] = _create_bulk_ufs_directory(
-                    image,
-                    filesystem,
-                    current_state,
-                    directory_name,
-                    mode=0o755,
-                )
-                continue
-            host_path = sysroot / relative_path
-            if os.path.islink(host_path):
-                _create_bulk_ufs_symlink(
-                    image,
-                    filesystem,
-                    current_state,
-                    directory_name,
-                    os.readlink(host_path),
-                )
-                continue
-            mode = host_path.lstat().st_mode & 0o777
-            directory_states[relative_path] = _create_bulk_ufs_directory(
-                image,
-                filesystem,
-                current_state,
-                directory_name,
-                mode=mode or 0o755,
-            )
-
-        dirnames[:] = [
-            directory_name
-            for directory_name in dirnames
-            if not os.path.islink(sysroot / relative_dir / directory_name)
-        ]
-
-        for file_name in filenames:
-            relative_path = relative_dir / file_name
-            if relative_path.parts and relative_path.parts[0] == 'stand':
-                continue
-            host_path = sysroot / relative_path
-            host_stat = host_path.lstat()
-            if os.path.islink(host_path):
-                _create_bulk_ufs_symlink(
-                    image,
-                    filesystem,
-                    current_state,
-                    file_name,
-                    os.readlink(host_path),
-                )
-                continue
-            if not host_path.is_file():
-                raise SystemExit(f'error: unsupported sysroot entry {host_path}')
-            _create_bulk_ufs_file(
-                image,
-                filesystem,
-                current_state,
-                file_name,
-                host_path.read_bytes(),
-                mode=host_stat.st_mode & 0o777 or 0o644,
-            )
-
-    _flush_bulk_ufs_directories(image, filesystem, directory_states)
 
 
 def _kernel_conf_roots(*, sysroot: Path, explicit_kernel_conf: Path | None) -> list[Path]:
@@ -889,6 +641,278 @@ def _prepare_base_image(
     )
 
 
+def _same_vtoc_partition(left: Any, right: VtocPartition) -> bool:
+    return (
+        int(left.index) == right.index
+        and int(left.tag) == right.tag
+        and int(left.flag) == right.flag
+        and int(left.start_sector) == right.start_sector
+        and int(left.sector_count) == right.sector_count
+    )
+
+
+def validate_existing_image_for_reuse(
+    image_path: Path,
+    *,
+    geometry: RawDiskGeometry,
+    unix_partition_start: int,
+    unix_partition_size: int,
+    slices: list[VtocPartition],
+    disk_addressing: str,
+) -> tuple[bool, str]:
+    if not image_path.exists():
+        return False, 'image does not exist'
+    expected_size = geometry.total_sectors * SECTOR_SIZE
+    if image_path.stat().st_size != expected_size:
+        return False, f'image size differs ({image_path.stat().st_size} != {expected_size})'
+    expected_mbr = build_mbr(
+        geometry,
+        unix_partition_start,
+        unix_partition_size,
+        boot_code=ACTIVE_PARTITION_CHAINLOADER_MBR,
+        disk_addressing=disk_addressing,
+    )
+    if read_sector(image_path, 0) != expected_mbr:
+        return False, 'MBR differs from requested layout'
+    try:
+        report = inspect_disk_metadata(image_path)
+    except BaseException as error:
+        return False, f'could not inspect existing image: {error}'
+    if report.notes:
+        return False, '; '.join(report.notes)
+    if report.active_unix_partition is None:
+        return False, 'missing active UNIX partition'
+    if report.active_unix_partition.start_lba != unix_partition_start:
+        return False, 'UNIX partition start differs'
+    if report.active_unix_partition.sector_count != unix_partition_size:
+        return False, 'UNIX partition size differs'
+    if report.pdinfo is None:
+        return False, 'missing pdinfo'
+    if report.pdinfo.cylinders != geometry.cylinders or report.pdinfo.tracks != geometry.heads or report.pdinfo.sectors != geometry.sectors_per_track:
+        return False, 'pdinfo geometry differs'
+    if report.pdinfo.logical_sector_0 != unix_partition_start:
+        return False, 'pdinfo logical sector zero differs'
+    if report.vtoc is None:
+        return False, 'missing VTOC'
+
+    existing_by_index = {partition.index: partition for partition in report.vtoc.partitions}
+    for expected in slices:
+        existing = existing_by_index.get(expected.index)
+        if existing is None:
+            return False, f'missing expected slice {expected.index}'
+        if not _same_vtoc_partition(existing, expected):
+            return False, f'slice {expected.index} layout differs'
+
+    stand_slice = _get_layout_slice(slices, 'stand')
+    stand_bytes = read_slice_bytes(image_path, stand_slice.start_sector, stand_slice.sector_count)
+    if not any(candidate.start_offset == 0 for candidate in detect_bfs(stand_bytes)):
+        return False, 'stand slice is not BFS'
+
+    root_slice = _get_layout_slice(slices, 'root')
+    root_image = DiskBackedSlice(image_path, root_slice.start_sector * SECTOR_SIZE, root_slice.sector_count * SECTOR_SIZE)
+    try:
+        if detect_ufs_at_start(root_image) is None:
+            return False, 'root slice is not UFS'
+    finally:
+        root_image.close()
+
+    return True, 'existing image layout and filesystems match'
+
+
+def create_or_recreate_image_layout(
+    image_path: Path,
+    *,
+    geometry: RawDiskGeometry,
+    unix_partition_start: int,
+    unix_partition_size: int,
+    slices: list[VtocPartition],
+    disk_addressing: str,
+    hdboot_partition_bootstrap: bytes,
+) -> None:
+    _prepare_base_image(
+        image_path,
+        reuse_existing=False,
+        geometry=geometry,
+        unix_partition_start=unix_partition_start,
+        unix_partition_size=unix_partition_size,
+        slices=slices,
+        disk_addressing=disk_addressing,
+    )
+    _write_slice_bytes(image_path, unix_partition_start, hdboot_partition_bootstrap)
+
+
+def format_stand_slice(image_path: Path, slices: list[VtocPartition], boot_files: list[tuple[str, bytes]]) -> None:
+    stand_slice = _get_layout_slice(slices, 'stand')
+    stand_slice_bytes = bytearray(read_slice_bytes(image_path, stand_slice.start_sector, stand_slice.sector_count))
+    format_bfs_filesystem(stand_slice_bytes, boot_files)
+    _write_slice_bytes(image_path, stand_slice.start_sector, stand_slice_bytes)
+
+
+def format_root_slice(
+    image_path: Path,
+    slices: list[VtocPartition],
+    *,
+    timestamp: int,
+    ufs_bytes_per_inode: int,
+    tracks_per_cylinder: int,
+    sectors_per_track: int,
+) -> None:
+    root_slice = _get_layout_slice(slices, 'root')
+    root_image = DiskBackedSlice(image_path, root_slice.start_sector * SECTOR_SIZE, root_slice.sector_count * SECTOR_SIZE)
+    try:
+        format_ufs_filesystem(
+            root_image,
+            timestamp=timestamp,
+            block_size=4096,
+            bytes_per_inode=ufs_bytes_per_inode,
+            tracks_per_cylinder=tracks_per_cylinder,
+            sectors_per_track=sectors_per_track,
+        )
+    finally:
+        root_image.close()
+
+
+@contextmanager
+def mount_slice(image_path: Path, slice_selector: str, filesystem: str, *, bulk_populate: bool = False):
+    with tempfile.TemporaryDirectory(prefix=f'svr4-{filesystem}-{slice_selector}-', ignore_cleanup_errors=True) as mount_dir:
+        mount_path = Path(mount_dir)
+        script_name = 'ufs_mount.py' if filesystem == 'ufs' else 'bfs_mount.py'
+        command = [
+            sys.executable,
+            str(HOST_TOOLS_ROOT / script_name),
+            str(image_path),
+            str(mount_path),
+            '--slice',
+            slice_selector,
+            '--cache-timeout',
+            '0',
+            '--no-default-permissions',
+        ]
+        # UFS population writes thousands of files; deferring fsync to unmount
+        # avoids a per-file disk barrier. The final close still fsyncs, so the
+        # image is durable once the build completes. (bfs_mount has no such
+        # flag; the /stand slice is tiny.)
+        if bulk_populate and filesystem == 'ufs':
+            command.append('--bulk-populate')
+        process = subprocess.Popen(command, start_new_session=True)
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                raise SystemExit(f'error: failed to mount {filesystem} slice {slice_selector}')
+            if _is_mounted(mount_path):
+                break
+            time.sleep(0.05)
+        else:
+            process.terminate()
+            raise SystemExit(f'error: timed out mounting {filesystem} slice {slice_selector}')
+        try:
+            yield mount_path
+        finally:
+            for unmount_command in (
+                ['fusermount3', '-u', str(mount_path)],
+                ['fusermount', '-u', str(mount_path)],
+                ['fusermount3', '-uz', str(mount_path)],
+                ['fusermount', '-uz', str(mount_path)],
+            ):
+                try:
+                    subprocess.run(unmount_command, check=False)
+                except FileNotFoundError:
+                    pass
+                if process.poll() is not None or not _is_mounted(mount_path):
+                    break
+            try:
+                _wait_ignoring_sigint(process, timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    _wait_ignoring_sigint(process, timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    _wait_ignoring_sigint(process, timeout=5)
+
+
+def _is_mounted(path: Path) -> bool:
+    if os.path.ismount(path):
+        return True
+    try:
+        result = subprocess.run(
+            ['findmnt', '--mountpoint', str(path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    return result.returncode == 0
+
+
+def _run_rsync(command: list[str]) -> None:
+    try:
+        process = subprocess.Popen(command)
+        try:
+            returncode = process.wait()
+        except KeyboardInterrupt:
+            process.terminate()
+            try:
+                _wait_ignoring_sigint(process, timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                _wait_ignoring_sigint(process, timeout=5)
+            raise
+        if returncode != 0:
+            raise subprocess.CalledProcessError(returncode, command)
+    except FileNotFoundError as error:
+        raise SystemExit('error: rsync is required for HDD image population') from error
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f'error: rsync failed with exit status {error.returncode}') from error
+
+
+def _rsync_common_args() -> list[str]:
+    return [
+        'rsync',
+        '-aH',
+        '--numeric-ids',
+        '--delete',
+        '--inplace',
+        '--whole-file',
+        '--human-readable',
+        '--info=progress2,stats2',
+    ]
+
+
+def _wait_ignoring_sigint(process: subprocess.Popen[Any], *, timeout: float) -> int:
+    previous_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        return process.wait(timeout=timeout)
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+
+
+def sync_stand_with_rsync(sysroot: Path, mount_path: Path) -> None:
+    _run_rsync([*_rsync_common_args(), f'{sysroot / "stand"}/', f'{mount_path}/'])
+
+
+def sync_root_with_rsync(sysroot: Path, mount_path: Path) -> None:
+    _run_rsync([*_rsync_common_args(), '--exclude=/stand/***', f'{sysroot}/', f'{mount_path}/'])
+
+
+def ensure_runtime_dirs_and_device_nodes(image_path: Path, kernel_conf_roots: list[Path]) -> None:
+    volume = UFSVolume.open_raw_image(image_path, 'root')
+    try:
+        _populate_required_runtime_directories(volume.image, volume.filesystem)
+        _populate_required_device_nodes(volume.image, volume.filesystem, kernel_conf_roots)
+        refresh_ufs_summary_layout(volume.image, volume.filesystem)
+    finally:
+        volume.close()
+
+
 def build_image(args: argparse.Namespace) -> None:
     image_path = Path(args.image).resolve()
     sysroot = Path(args.sysroot).resolve()
@@ -927,46 +951,51 @@ def build_image(args: argparse.Namespace) -> None:
         root_align_sectors=root_align_sectors,
     )
 
-    with tempfile.TemporaryDirectory(prefix='svr4-image-build-') as temp_dir:
-        temp_image_path = Path(temp_dir) / image_path.name
-        if args.reuse_existing and image_path.exists():
-            shutil.copyfile(image_path, temp_image_path)
-        _prepare_base_image(
-            temp_image_path,
-            reuse_existing=args.reuse_existing,
+    force_reformat = args.force_reformat or args.no_reuse_existing
+    reused, reuse_reason = (False, 'forced reformat')
+    if not force_reformat:
+        reused, reuse_reason = validate_existing_image_for_reuse(
+            image_path,
             geometry=geometry,
             unix_partition_start=unix_partition_start,
             unix_partition_size=unix_partition_size,
             slices=slices,
             disk_addressing=args.disk_addressing,
         )
-        _write_slice_bytes(temp_image_path, unix_partition_start, hdboot_partition_bootstrap)
 
-        stand_slice = _get_layout_slice(slices, 'stand')
-        stand_slice_bytes = bytearray(read_slice_bytes(temp_image_path, stand_slice.start_sector, stand_slice.sector_count))
-        format_bfs_filesystem(stand_slice_bytes, boot_files)
-        _write_slice_bytes(temp_image_path, stand_slice.start_sector, stand_slice_bytes)
-
-        root_slice = _get_layout_slice(slices, 'root')
-        root_slice_bytes = bytearray(read_slice_bytes(temp_image_path, root_slice.start_sector, root_slice.sector_count))
-        filesystem = format_ufs_filesystem(
-            root_slice_bytes,
+    if reused:
+        _write_slice_bytes(image_path, unix_partition_start, hdboot_partition_bootstrap)
+        print(f'Reusing existing SVR4 image at {image_path}: {reuse_reason}')
+    else:
+        print(f'Recreating SVR4 image at {image_path}: {reuse_reason}')
+        create_or_recreate_image_layout(
+            image_path,
+            geometry=geometry,
+            unix_partition_start=unix_partition_start,
+            unix_partition_size=unix_partition_size,
+            slices=slices,
+            disk_addressing=args.disk_addressing,
+            hdboot_partition_bootstrap=hdboot_partition_bootstrap,
+        )
+        format_stand_slice(image_path, slices, boot_files)
+        format_root_slice(
+            image_path,
+            slices,
             timestamp=int(time.time()),
-            block_size=4096,
-            bytes_per_inode=ufs_bytes_per_inode,
+            ufs_bytes_per_inode=ufs_bytes_per_inode,
             tracks_per_cylinder=geometry.heads,
             sectors_per_track=geometry.sectors_per_track,
         )
-        _populate_root_slice(root_slice_bytes, filesystem, sysroot)
-        _populate_required_runtime_directories(root_slice_bytes, filesystem)
-        _populate_required_device_nodes(root_slice_bytes, filesystem, kernel_conf_roots)
-        refresh_ufs_summary_layout(root_slice_bytes, filesystem)
-        _write_slice_bytes(temp_image_path, root_slice.start_sector, root_slice_bytes)
 
-        shutil.copyfile(temp_image_path, image_path)
+    with mount_slice(image_path, 'stand', 'bfs') as stand_mount:
+        sync_stand_with_rsync(sysroot, stand_mount)
+    with mount_slice(image_path, 'root', 'ufs', bulk_populate=True) as root_mount:
+        sync_root_with_rsync(sysroot, root_mount)
+    ensure_runtime_dirs_and_device_nodes(image_path, kernel_conf_roots)
 
     missing_note = '' if not missing_boot_files else f' Missing boot files: {", ".join(missing_boot_files)}.'
-    print(f'Built SVR4 image at {image_path}.{missing_note}')
+    path_note = 'reused existing image via rsync' if reused else 'recreated image and populated via rsync'
+    print(f'Built SVR4 image at {image_path} ({path_note}).{missing_note}')
 
 def main() -> None:
     parser = _build_parser()

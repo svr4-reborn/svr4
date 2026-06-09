@@ -73,6 +73,67 @@ def inspect_slice_by_selector(image_path: Path, selector: str) -> tuple[DiskImag
     raise SystemExit(f'error: no slice matching {selector!r} was found')
 
 
+def inspect_disk_metadata(image_path: Path) -> DiskImageReport:
+    image_path = image_path.resolve()
+    file_size = image_path.stat().st_size
+    notes: list[str] = []
+    mbr = parse_mbr_sector(read_sector(image_path, 0))
+    if mbr.signature != 0xAA55:
+        notes.append(f'Unexpected MBR signature 0x{mbr.signature:04x}; image may be unpartitioned or use a non-MBR boot sector.')
+
+    active_unix_partition = find_active_unix_partition(mbr)
+    pdinfo = None
+    vtoc = None
+    slice_filesystems: list[SliceFilesystem] = []
+
+    if active_unix_partition is None:
+        notes.append('No UNIX partition (type 0x63) was found in the MBR.')
+    else:
+        pdinfo = read_pdinfo(image_path, active_unix_partition.start_lba)
+        if not is_valid_pdinfo(pdinfo):
+            notes.append(
+                f'Invalid pdinfo sanity 0x{pdinfo.sanity:08x} at sector {active_unix_partition.start_lba + HDPDLOC}; expected 0x{0xCA5E600D:08x}.'
+            )
+        else:
+            vtoc = read_vtoc(image_path, active_unix_partition.start_lba, pdinfo)
+            if not is_valid_vtoc(vtoc):
+                notes.append(f'Invalid VTOC sanity 0x{vtoc.sanity:08x}; expected 0x{0x600DDEEE:08x}.')
+            else:
+                for partition in vtoc.partitions:
+                    if partition.tag == 0 or partition.sector_count <= 0:
+                        continue
+                    absolute_start_sector = absolute_sector_for_slice(pdinfo, partition.start_sector)
+                    slice_filesystems.append(
+                        SliceFilesystem(
+                            slice_index=partition.index,
+                            tag=partition.tag,
+                            start_sector=partition.start_sector,
+                            absolute_start_sector=absolute_start_sector,
+                            sector_count=partition.sector_count,
+                        )
+                    )
+
+    return DiskImageReport(
+        path=str(image_path),
+        file_size=file_size,
+        mbr=mbr,
+        active_unix_partition=active_unix_partition,
+        pdinfo=pdinfo,
+        vtoc=vtoc,
+        slice_filesystems=slice_filesystems,
+        notes=notes,
+    )
+
+
+def inspect_slice_metadata_by_selector(image_path: Path, selector: str) -> tuple[DiskImageReport, SliceFilesystem]:
+    report = inspect_disk_metadata(image_path)
+    partition = get_vtoc_partition_by_selector(report, selector)
+    for slice_info in report.slice_filesystems:
+        if slice_info.slice_index == partition.index:
+            return report, slice_info
+    raise SystemExit(f'error: no slice matching {selector!r} was found')
+
+
 def get_vtoc_partition_by_selector(report: DiskImageReport, selector: str) -> VtocPartition:
     if report.vtoc is None:
         raise SystemExit('error: image does not contain a valid VTOC')

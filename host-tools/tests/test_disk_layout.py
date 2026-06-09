@@ -13,7 +13,7 @@ import trio
 import host_tools.fs.ufs as ufs_module
 
 from host_tools.disk.cli import format_bfs_path
-from host_tools.disk.create import ACTIVE_PARTITION_CHAINLOADER_MBR, RawDiskGeometry, create_raw_image_skeleton
+from host_tools.disk.create import ACTIVE_PARTITION_CHAINLOADER_MBR, DISK_ADDRESSING_CHS, DISK_ADDRESSING_LBA28, RawDiskGeometry, create_raw_image_skeleton
 from host_tools.disk.fsprobe import select_slice_filesystem
 from host_tools.disk.inspect import inspect_disk_image, inspect_slice_by_selector, read_slice_bytes, resolve_guest_visible_sector
 from host_tools.disk.structures import AltInfo, AltTableInfo, PdInfo, VtocPartition
@@ -21,16 +21,134 @@ from host_tools.disk.svr4 import ALT_SANITY, ALT_VERSION, is_valid_alt_info, par
 from host_tools.fs.bfs import read_bfs_path_bytes
 from host_tools.fs.bfs_fuse import BFSOperations, BFSVolume, make_test_context as make_bfs_test_context
 from host_tools.fs.common import BFS_MAGIC, UFS_DINODE_SIZE
+from host_tools.fs.disk_backed import DiskBackedSlice
 from host_tools.fs.ufs import build_ufs_directory_block, format_ufs_filesystem, make_ufs_directory, create_ufs_file, read_ufs_path_bytes
 from host_tools.fs.common import UFS_FS_BSIZE_OFFSET, UFS_FS_FPG_OFFSET, UFS_FS_FRAG_OFFSET, UFS_FS_FSIZE_OFFSET, UFS_FS_FSBTODB_OFFSET, UFS_FS_INOPB_OFFSET, UFS_FS_IPG_OFFSET, UFS_FS_MAGIC_OFFSET, UFS_MAGIC, UFS_SB_OFFSET
 from host_tools.fs.ufs import UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS_CGOFFSET_OFFSET, UFS_FS_CSMASK_OFFSET, UFS_FS_CSSHIFT_OFFSET, UFS_FS_DBLKNO_OFFSET, UFS_FS_IBLKNO_OFFSET, UFS_FS_NCG_OFFSET, UFS_FS_NINDIR_OFFSET
 from host_tools.fs.ufs_fuse import UFSOperations, UFSVolume, make_test_context
 from host_tools.fs.ufs_lowlevel import detect_ufs as detect_ufs_lowlevel, read_ufs_file as read_ufs_file_lowlevel, read_ufs_inode as read_ufs_inode_lowlevel, ufs_inode_offset as ufs_inode_offset_lowlevel
 from test_ufs_namespace import build_test_filesystem
-from tasks.make_image import _build_hdboot_partition_bootstrap
+from tasks.make_image import _build_hdboot_partition_bootstrap, _build_slice_layout, _run_rsync, format_root_slice, format_stand_slice, sync_root_with_rsync, validate_existing_image_for_reuse
 
 
 class DiskLayoutTests(unittest.TestCase):
+    def test_create_skeleton_uses_sparse_file_for_large_lba_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / 'large-sparse.raw'
+            geometry = RawDiskGeometry(cylinders=4096, heads=16, sectors_per_track=63)
+            create_raw_image_skeleton(
+                image_path,
+                geometry=geometry,
+                unix_partition_start=1,
+                unix_partition_size=geometry.total_sectors - 1,
+                volume='SVR4',
+                slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=2048, sector_count=2048)],
+                disk_addressing=DISK_ADDRESSING_LBA28,
+            )
+
+            stat_result = image_path.stat()
+            self.assertEqual(stat_result.st_size, geometry.total_sectors * 512)
+            self.assertLess(stat_result.st_blocks * 512, stat_result.st_size // 16)
+
+    def test_validate_existing_image_for_reuse_accepts_exact_layout_and_rejects_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / 'reuse.raw'
+            geometry = RawDiskGeometry(cylinders=512, heads=4, sectors_per_track=17)
+            unix_partition_start, unix_partition_size, slices = _build_slice_layout(
+                geometry,
+                stand_start_sector=64,
+                stand_size_mb=1,
+                swap_size_mb=1,
+                root_align_sectors=68,
+            )
+            create_raw_image_skeleton(
+                image_path,
+                geometry=geometry,
+                unix_partition_start=unix_partition_start,
+                unix_partition_size=unix_partition_size,
+                volume='SVR4',
+                slices=slices,
+                mbr_boot_code=ACTIVE_PARTITION_CHAINLOADER_MBR,
+                disk_addressing=DISK_ADDRESSING_CHS,
+            )
+            format_stand_slice(image_path, slices, [('unix', b'kernel'), ('hdboot', b'boot')])
+            format_root_slice(
+                image_path,
+                slices,
+                timestamp=1,
+                ufs_bytes_per_inode=8192,
+                tracks_per_cylinder=geometry.heads,
+                sectors_per_track=geometry.sectors_per_track,
+            )
+
+            reusable, reason = validate_existing_image_for_reuse(
+                image_path,
+                geometry=geometry,
+                unix_partition_start=unix_partition_start,
+                unix_partition_size=unix_partition_size,
+                slices=slices,
+                disk_addressing=DISK_ADDRESSING_CHS,
+            )
+            self.assertTrue(reusable, reason)
+
+            reusable, reason = validate_existing_image_for_reuse(
+                image_path,
+                geometry=RawDiskGeometry(cylinders=513, heads=4, sectors_per_track=17),
+                unix_partition_start=unix_partition_start,
+                unix_partition_size=unix_partition_size,
+                slices=slices,
+                disk_addressing=DISK_ADDRESSING_CHS,
+            )
+            self.assertFalse(reusable)
+            self.assertIn('image size differs', reason)
+
+    def test_root_rsync_excludes_stand_and_deletes_stale_files(self) -> None:
+        with patch('tasks.make_image.subprocess.Popen') as popen:
+            popen.return_value.wait.return_value = 0
+            sync_root_with_rsync(Path('/tmp/sysroot'), Path('/tmp/mount'))
+
+        command = popen.call_args.args[0]
+        self.assertIn('--delete', command)
+        self.assertIn('--inplace', command)
+        self.assertIn('--whole-file', command)
+        self.assertIn('--info=progress2,stats2', command)
+        self.assertIn('--exclude=/stand/***', command)
+        self.assertIn('/tmp/sysroot/', command)
+        self.assertIn('/tmp/mount/', command)
+
+    def test_rsync_terminates_child_on_keyboard_interrupt(self) -> None:
+        with patch('tasks.make_image.subprocess.Popen') as popen:
+            process = popen.return_value
+            process.wait.side_effect = [KeyboardInterrupt(), 0]
+
+            with self.assertRaises(KeyboardInterrupt):
+                _run_rsync(['rsync', 'source', 'dest'])
+
+        process.terminate.assert_called_once()
+        self.assertEqual(process.wait.call_count, 2)
+
+    def test_disk_backed_slice_buffers_writes_until_sync_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / 'disk-backed.raw'
+            image_path.write_bytes(b'\0' * 131072)
+            disk_slice = DiskBackedSlice(image_path, 0, 131072)
+            try:
+                disk_slice[100:104] = b'test'
+                self.assertEqual(disk_slice[100:104], b'test')
+                self.assertEqual(image_path.read_bytes()[100:104], b'\0\0\0\0')
+
+                ranges = disk_slice.dirty_ranges()
+                self.assertEqual(ranges, [(0, 65536)])
+
+                disk_slice.flush(sync=False)
+                self.assertEqual(image_path.read_bytes()[100:104], b'\0\0\0\0')
+
+                disk_slice.flush(sync=True)
+                self.assertEqual(image_path.read_bytes()[100:104], b'test')
+                self.assertEqual(disk_slice.dirty_ranges(), [])
+            finally:
+                disk_slice.close()
+
     def test_active_partition_chainloader_mbr_relocates_before_loading_bootstrap(self) -> None:
         self.assertLessEqual(len(ACTIVE_PARTITION_CHAINLOADER_MBR), 446)
         self.assertIn(bytes.fromhex('89e6bf0006b90002fcf3a4ea1d060000'), ACTIVE_PARTITION_CHAINLOADER_MBR)
@@ -146,6 +264,39 @@ class DiskLayoutTests(unittest.TestCase):
             self.assertEqual(absolute_sector, 69)
             self.assertEqual(guest_visible_sector, 300)
             self.assertEqual(data[:32], b'guest-visible remap works here..')
+
+    def test_chs_mode_rejects_geometry_above_classic_cylinder_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / 'too-large.raw'
+            with self.assertRaises(SystemExit):
+                create_raw_image_skeleton(
+                    image_path,
+                    geometry=RawDiskGeometry(cylinders=1300, heads=16, sectors_per_track=63),
+                    unix_partition_start=1,
+                    unix_partition_size=(1300 * 16 * 63) - 1,
+                    volume='SVR4',
+                    slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=2048, sector_count=2048)],
+                )
+
+    def test_lba28_mode_allows_large_geometry_and_saturates_mbr_chs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = Path(temp_dir) / 'lba.raw'
+            create_raw_image_skeleton(
+                image_path,
+                geometry=RawDiskGeometry(cylinders=1300, heads=16, sectors_per_track=63),
+                unix_partition_start=1,
+                unix_partition_size=(1300 * 16 * 63) - 1,
+                volume='SVR4',
+                slices=[VtocPartition(index=1, tag=0x02, flag=0x200, start_sector=2048, sector_count=2048)],
+                disk_addressing=DISK_ADDRESSING_LBA28,
+            )
+
+            image = image_path.read_bytes()
+            partition_entry = image[446:462]
+
+            self.assertEqual(partition_entry[5:8], bytes([15, 0xff, 0xff]))
+            self.assertEqual(int.from_bytes(partition_entry[8:12], 'little'), 1)
+            self.assertEqual(int.from_bytes(partition_entry[12:16], 'little'), (1300 * 16 * 63) - 1)
 
     @staticmethod
     def build_detectable_ufs_image(super_offset: int = UFS_SB_OFFSET) -> bytearray:

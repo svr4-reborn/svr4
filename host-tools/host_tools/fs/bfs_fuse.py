@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import inspect
 import logging
 import os
 import stat
@@ -25,6 +26,64 @@ from host_tools.fs.common import BFS_ROOT_INODE, FilesystemCandidate, SECTOR_SIZ
 
 
 log = logging.getLogger(__name__)
+
+
+class DirtyTrackingBytearray(bytearray):
+    def __new__(cls, initial: bytes | bytearray = b'') -> 'DirtyTrackingBytearray':
+        instance = super().__new__(cls, initial)
+        instance._dirty_ranges: list[tuple[int, int]] = []
+        return instance
+
+    def _record_dirty_range(self, start: int, end: int) -> None:
+        bounded_start = max(0, start)
+        bounded_end = min(len(self), end)
+        if bounded_start >= bounded_end:
+            return
+        merged_start = bounded_start
+        merged_end = bounded_end
+        merged_ranges: list[tuple[int, int]] = []
+        inserted = False
+        for existing_start, existing_end in self._dirty_ranges:
+            if existing_end < merged_start:
+                merged_ranges.append((existing_start, existing_end))
+                continue
+            if merged_end < existing_start:
+                if not inserted:
+                    merged_ranges.append((merged_start, merged_end))
+                    inserted = True
+                merged_ranges.append((existing_start, existing_end))
+                continue
+            merged_start = min(merged_start, existing_start)
+            merged_end = max(merged_end, existing_end)
+        if not inserted:
+            merged_ranges.append((merged_start, merged_end))
+        self._dirty_ranges = merged_ranges
+
+    def consume_dirty_ranges(self) -> list[tuple[int, int]]:
+        ranges = list(self._dirty_ranges)
+        self._dirty_ranges.clear()
+        return ranges
+
+    def __setitem__(self, key: int | slice, value: object) -> None:
+        if isinstance(key, slice):
+            start, stop, step = key.indices(len(self))
+            if step == 1:
+                dirty_start = start
+                dirty_end = stop
+            else:
+                positions = list(range(start, stop, step))
+                if positions:
+                    dirty_start = min(positions)
+                    dirty_end = max(positions) + 1
+                else:
+                    dirty_start = 0
+                    dirty_end = 0
+        else:
+            index = key if key >= 0 else len(self) + key
+            dirty_start = index
+            dirty_end = index + 1
+        super().__setitem__(key, value)
+        self._record_dirty_range(dirty_start, dirty_end)
 
 
 def init_logging(debug: bool = False) -> None:
@@ -91,8 +150,12 @@ class BFSVolume:
     image: bytearray
     filesystem: FilesystemCandidate
     sector_count: int
-    flush_callback: Callable[[bytearray], None] | None = None
+    flush_callback: Callable[[bytearray, Sequence[tuple[int, int]], bool], None] | None = None
     close_callback: Callable[[], None] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.image, DirtyTrackingBytearray):
+            self.image = DirtyTrackingBytearray(self.image)
 
     @classmethod
     def open_raw_image(cls, image_path: Path, slice_selector: str) -> 'BFSVolume':
@@ -115,11 +178,13 @@ class BFSVolume:
         handle = resolved_path.open('r+b')
         disk_offset = slice_info.absolute_start_sector * SECTOR_SIZE
 
-        def flush_callback(data: bytearray) -> None:
-            handle.seek(disk_offset)
-            handle.write(data)
+        def flush_callback(data: bytearray, dirty_ranges: Sequence[tuple[int, int]], sync: bool) -> None:
+            for start, end in dirty_ranges:
+                handle.seek(disk_offset + start)
+                handle.write(data[start:end])
             handle.flush()
-            os.fsync(handle.fileno())
+            if sync:
+                os.fsync(handle.fileno())
 
         return cls(
             image=slice_image,
@@ -129,11 +194,17 @@ class BFSVolume:
             close_callback=handle.close,
         )
 
-    def flush(self) -> None:
+    def flush(self, sync: bool = True) -> None:
         if self.flush_callback is not None:
-            self.flush_callback(self.image)
+            dirty_ranges = self.image.consume_dirty_ranges() if isinstance(self.image, DirtyTrackingBytearray) else []
+            if dirty_ranges or sync:
+                if len(inspect.signature(self.flush_callback).parameters) == 1:
+                    self.flush_callback(self.image)  # type: ignore[misc]
+                else:
+                    self.flush_callback(self.image, dirty_ranges, sync)
 
     def close(self) -> None:
+        self.flush(sync=True)
         if self.close_callback is not None:
             self.close_callback()
             self.close_callback = None
@@ -619,6 +690,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--debug', action='store_true', default=False, help='Enable Python-side debug logging')
     parser.add_argument('--debug-fuse', action='store_true', default=False, help='Enable libfuse debug logging')
     parser.add_argument('--allow-other', action='store_true', default=False, help='Pass allow_other to FUSE')
+    parser.add_argument('--no-default-permissions', action='store_true', default=False, help='Do not let the kernel enforce mode bits before FUSE operations')
     parser.add_argument('--slow-op-ms', type=float, default=0.0, help='Log lookup/getattr/readdir operations slower than this many milliseconds')
     parser.add_argument('--cache-timeout', type=float, default=1.0, help='Kernel entry/attribute cache timeout in seconds (default: 1.0)')
     return parser
@@ -636,6 +708,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     operations = BFSOperations(volume, slow_op_ms=options.slow_op_ms, cache_timeout=options.cache_timeout)
     fuse_options = set(pyfuse3.default_options)
     fuse_options.add(f'fsname=svr4-bfs:{options.image.name}:{options.slice}')
+    if options.no_default_permissions:
+        fuse_options.discard('default_permissions')
     if options.allow_other:
         fuse_options.add('allow_other')
     if options.debug_fuse:
