@@ -28,7 +28,7 @@ from host_tools.fs.ufs import UFS_FS_CBLKNO_OFFSET, UFS_FS_CGMASK_OFFSET, UFS_FS
 from host_tools.fs.ufs_fuse import UFSOperations, UFSVolume, make_test_context
 from host_tools.fs.ufs_lowlevel import detect_ufs as detect_ufs_lowlevel, read_ufs_file as read_ufs_file_lowlevel, read_ufs_inode as read_ufs_inode_lowlevel, ufs_inode_offset as ufs_inode_offset_lowlevel
 from test_ufs_namespace import build_test_filesystem
-from tasks.make_image import _build_hdboot_partition_bootstrap, _build_slice_layout, _run_rsync, format_root_slice, format_stand_slice, sync_root_with_rsync, validate_existing_image_for_reuse
+from tasks.make_image import _build_hdboot_partition_bootstrap, _build_slice_layout, _run_rsync, format_root_slice, format_stand_slice, mount_slice, sync_root_with_rsync, validate_existing_image_for_reuse
 
 
 class DiskLayoutTests(unittest.TestCase):
@@ -115,6 +115,24 @@ class DiskLayoutTests(unittest.TestCase):
         self.assertIn('--exclude=/stand/***', command)
         self.assertIn('/tmp/sysroot/', command)
         self.assertIn('/tmp/mount/', command)
+
+    def test_bulk_ufs_mount_uses_short_kernel_cache_timeout(self) -> None:
+        with (
+            patch('tasks.make_image._is_mounted', return_value=True),
+            patch('tasks.make_image.subprocess.Popen') as popen,
+            patch('tasks.make_image.subprocess.run'),
+        ):
+            process = popen.return_value
+            process.poll.return_value = None
+            process.wait.return_value = 0
+
+            with mount_slice(Path('/tmp/image.raw'), 'root', 'ufs', bulk_populate=True):
+                pass
+
+        command = popen.call_args.args[0]
+        cache_timeout_index = command.index('--cache-timeout')
+        self.assertEqual(command[cache_timeout_index + 1], '1')
+        self.assertIn('--bulk-populate', command)
 
     def test_rsync_terminates_child_on_keyboard_interrupt(self) -> None:
         with patch('tasks.make_image.subprocess.Popen') as popen:

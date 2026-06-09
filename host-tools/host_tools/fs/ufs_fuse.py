@@ -33,16 +33,20 @@ from host_tools.fs.ufs import apply_ufs_inode_write
 from host_tools.fs.ufs import apply_ufs_inode_replacement
 from host_tools.fs.ufs import clear_ufs_filesystem_runtime_caches
 from host_tools.fs.ufs import clear_ufs_runtime_caches
+from host_tools.fs.ufs import add_ufs_directory_entry
 from host_tools.fs.ufs import create_ufs_file_in_parent
 from host_tools.fs.ufs import detach_ufs_directory
 from host_tools.fs.ufs import detach_ufs_path
 from host_tools.fs.ufs import detect_ufs_at_start
 from host_tools.fs.ufs import finalize_ufs_unlinked_inode
-from host_tools.fs.ufs import link_ufs_path
 from host_tools.fs.ufs import lookup_ufs_directory_entry
 from host_tools.fs.ufs import make_ufs_directory_in_parent
+from host_tools.fs.ufs import ensure_ufs_metadata_normalized
+from host_tools.fs.ufs import reconcile_ufs_block_bitmap_from_inodes
 from host_tools.fs.ufs import read_ufs_inode
 from host_tools.fs.ufs import refresh_ufs_summary_layout
+from host_tools.fs.ufs import UFS_FS_CLEAN_OFFSET
+from host_tools.fs.ufs import UFS_FS_FMOD_OFFSET
 from host_tools.fs.ufs import rename_ufs_in_parent
 from host_tools.fs.ufs import ufs_allocation_byte_sizes
 from host_tools.fs.ufs import ufs_inode_data_blocks
@@ -50,10 +54,12 @@ from host_tools.fs.ufs import remove_ufs_directory
 from host_tools.fs.ufs import rename_ufs_path
 from host_tools.fs.ufs import resolve_ufs_path
 from host_tools.fs.ufs import ufs_file_type
+from host_tools.fs.ufs import ufs_is_directory
 from host_tools.fs.ufs import ufs_is_symlink
 from host_tools.fs.ufs import ufs_inode_pointer_blocks
 from host_tools.fs.ufs import unlink_ufs_path
 from host_tools.fs.ufs import write_ufs_inode_mode
+from host_tools.fs.ufs import write_ufs_inode_nlink
 from host_tools.fs.ufs import write_ufs_inode_times
 from host_tools.fs.ufs import write_ufs_inode_uid_gid
 
@@ -261,6 +267,20 @@ class OpenHandle:
 
 
 @dataclass
+class DirectoryEntryState:
+    next_id: int
+    name: str
+    inode: int
+    attr: EntryAttributes
+
+
+@dataclass
+class DirectoryHandle:
+    inode: InodeT
+    entries: list[DirectoryEntryState] | None = None
+
+
+@dataclass
 class PendingDeletion:
     directory: bool
 
@@ -269,11 +289,12 @@ class UFSOperations(pyfuse3.Operations):
     supports_dot_lookup = True
     enable_writeback_cache = True
 
-    def __init__(self, volume: UFSVolume, slow_op_ms: float = 0.0, cache_timeout: float = 1.0, bulk_populate: bool = False) -> None:
+    def __init__(self, volume: UFSVolume, slow_op_ms: float = 0.0, cache_timeout: float = 1.0, bulk_populate: bool = False, reconcile_blocks: bool = False) -> None:
         super().__init__()
         self._volume = volume
         self._slow_op_ms = slow_op_ms
         self._cache_timeout = cache_timeout
+        self._reconcile_blocks = reconcile_blocks
         # In bulk-populate mode, per-operation flushes write through to the OS
         # page cache (pwrite) but skip the fsync barrier; durability is provided
         # by the single fsync performed when the volume is closed at unmount.
@@ -287,7 +308,7 @@ class UFSOperations(pyfuse3.Operations):
         self._directory_entry_cache: dict[tuple[int, str], tuple[int, dict[str, int | list[int]]]] = {}
         self._directory_name_cache: dict[int, set[str]] = {}
         self._open_handles: dict[FileHandleT, OpenHandle] = {}
-        self._directory_handles: dict[FileHandleT, InodeT] = {}
+        self._directory_handles: dict[FileHandleT, DirectoryHandle] = {}
         self._pending_deletions: dict[InodeT, PendingDeletion] = {}
         self._next_handle = 1
         # Per-operation full cylinder-group summary recomputation is O(filesystem
@@ -296,6 +317,60 @@ class UFSOperations(pyfuse3.Operations):
         # incrementally, so we skip the expensive rotational-layout rebuild during
         # the mount and reconcile it once when the filesystem is finalized.
         self._summary_dirty = False
+
+    def reconcile_on_mount(self) -> None:
+        """Light, fsck-style reconciliation run once before the mount serves I/O.
+
+        A guest VM killed without unmounting leaves the on-disk UFS marked dirty
+        and its summary accounting (per-cylinder-group and superblock free
+        block/inode/dir counts) potentially out of sync with the allocation
+        bitmaps. Rebuilding those counts from the bitmaps up front means the
+        allocators start from a coherent free-count view, so a reused dirty image
+        does not slowly drift into ENOSPC or bogus statfs numbers. This is O(ncg)
+        cylinder-group reads, not an inode tree walk, so it stays cheap even on a
+        large slice; the expensive tree-level reconciliation is handled for free
+        by the rsync --delete pass that follows.
+
+        Per-inode link-count and orphan repair is deliberately *not* done here:
+        rsync rewrites the tree to match the sysroot, and the tolerant free paths
+        (see warn_inconsistent_ufs_metadata) absorb any stale bitmap state without
+        aborting the mount.
+        """
+        image = self._volume.image
+        filesystem = self._volume.filesystem
+        super_offset = filesystem.super_offset
+        clean = image[super_offset + UFS_FS_CLEAN_OFFSET]
+        fmod = image[super_offset + UFS_FS_FMOD_OFFSET]
+        unclean = clean != 1 or fmod != 0
+        if unclean:
+            logging.getLogger(__name__).warning(
+                'ufs-fuse: %s was not cleanly unmounted (fs_clean=%d, fs_fmod=%d); '
+                'reconciling free-space accounting before population',
+                getattr(self._volume, 'slice_selector', 'root'),
+                clean,
+                fmod,
+            )
+        # Recompute regardless of the flag: detection of an unclean shutdown is
+        # best-effort (an older SVR4 kernel may not update fs_clean the way we
+        # expect), and the recompute is cheap and idempotent on a clean image.
+        # When reusing a potentially dirty image, repair cross-linked/stale
+        # inodes (a block marked free in the bitmap while a live inode still
+        # references it) before recomputing accounting, so the rebuilt summary
+        # counts reflect the corrected bitmap. This walks the inode table once
+        # and is gated to the reused-image path; a fresh format never needs it.
+        if self._reconcile_blocks:
+            reconcile_ufs_block_bitmap_from_inodes(image, filesystem)
+        # force=True rebuilds the summary counts from the bitmaps even if the
+        # runtime state was already marked normalized (e.g. by the formatter),
+        # and leaves it marked normalized so the first allocator call later does
+        # not pay for a second full-filesystem recompute.
+        ensure_ufs_metadata_normalized(image, filesystem, force=True)
+        # Mark the filesystem clean now that its accounting is coherent. The
+        # population pass that follows keeps it coherent incrementally, and the
+        # guest's own fsck/mount will re-evaluate it on next boot anyway.
+        image[super_offset + UFS_FS_CLEAN_OFFSET] = 1
+        image[super_offset + UFS_FS_FMOD_OFFSET] = 0
+        self._flush(sync=True)
 
     def _mark_summary_dirty(self) -> None:
         self._summary_dirty = True
@@ -511,6 +586,69 @@ class UFSOperations(pyfuse3.Operations):
         ufs_inode, inode_data = self._inode_state(inode)
         return self._entry_from_inode(ufs_inode, inode_data)
 
+    def _discard_stale_inode_state(self, ufs_inode: int) -> None:
+        # A newly allocated UFS inode number may collide with the FUSE inode key of
+        # a previously unlinked inode whose deferred deletion is still pending (the
+        # kernel has not yet sent the matching forget). Because we key FUSE inodes
+        # 1:1 on the UFS inode number, the allocator can hand the same number back
+        # out before that forget arrives. The pending deletion now refers to the
+        # *old* file, which no longer exists; finalizing it later would free the
+        # bitmap bit that the new file legitimately owns (a double free). Drop the
+        # stale bookkeeping so the reused inode starts from a clean slate.
+        fuse_inode = self._fuse_inode(ufs_inode)
+        self._pending_deletions.pop(fuse_inode, None)
+        self._lookup_counts.pop(fuse_inode, None)
+        self._inode_path_map.pop(fuse_inode, None)
+
+    def _inode_from_creation_result(self, result: dict[str, object]) -> tuple[int, dict[str, int | list[int]]]:
+        inode_number = int(result['inode'])
+        self._discard_stale_inode_state(inode_number)
+        inode_data = result.get('inode_data')
+        if isinstance(inode_data, dict):
+            return inode_number, cast(dict[str, int | list[int]], inode_data)
+        reread_inode = read_ufs_inode(
+            self._volume.image,
+            self._volume.filesystem.start_offset,
+            self._volume.filesystem.details,
+            inode_number,
+        )
+        if reread_inode is None:
+            raise FUSEError(errno.EIO)
+        return inode_number, reread_inode
+
+    def _load_directory_entries(self, directory_handle: DirectoryHandle) -> list[DirectoryEntryState]:
+        if directory_handle.entries is not None:
+            return directory_handle.entries
+
+        inode = directory_handle.inode
+        _, directory_inode = self._inode_state(inode)
+        entries: list[DirectoryEntryState] = []
+        for record in iter_ufs_inode_directory_records(self._volume.image, self._volume.filesystem, directory_inode):
+            if record.inode == 0:
+                continue
+            child_inode_number = int(record.inode)
+            child_inode = read_ufs_inode(
+                self._volume.image,
+                self._volume.filesystem.start_offset,
+                self._volume.filesystem.details,
+                child_inode_number,
+            )
+            if child_inode is None or int(child_inode['mode']) == 0:
+                continue
+            entries.append(
+                DirectoryEntryState(
+                    next_id=record.offset + 1,
+                    name=record.name,
+                    inode=child_inode_number,
+                    attr=self._entry_from_inode(child_inode_number, child_inode),
+                )
+            )
+            if record.name not in {'.', '..'}:
+                self._cache_directory_entry(self._ufs_inode_number(inode), record.name, child_inode_number, child_inode)
+                self._remember_directory_name(self._ufs_inode_number(inode), record.name)
+        directory_handle.entries = entries
+        return entries
+
     def _flush(self, sync: bool | None = None) -> None:
         # sync=None means "use the configured per-operation policy": always sync
         # in interactive mode, defer in bulk-populate mode. Callers that need a
@@ -524,8 +662,11 @@ class UFSOperations(pyfuse3.Operations):
         for handle in self._open_handles.values():
             handle.dirty = False
 
-    def _invalidate_inode_cache(self, inode: InodeT) -> None:
+    def _invalidate_inode_cache(self, inode: InodeT, *, except_handle: FileHandleT | None = None) -> None:
+        except_open_handle = self._open_handles.get(except_handle)
         for handle in self._open_handles.values():
+            if handle is except_open_handle:
+                continue
             if handle.inode != inode:
                 continue
             handle.inode_data = None
@@ -568,10 +709,30 @@ class UFSOperations(pyfuse3.Operations):
         elif pointer_blocks_state is None and handle.pointer_blocks is None and handle.data_blocks is not None and len(handle.data_blocks) <= 12:
             handle.pointer_blocks = []
 
-    def _truncate(self, inode: InodeT, size: int) -> None:
-        ufs_inode, inode_data = self._inode_state(inode)
-        apply_ufs_inode_truncate(self._volume.image, self._volume.filesystem, ufs_inode, inode_data, size)
-        self._invalidate_inode_cache(inode)
+    def _truncate(
+        self,
+        inode: InodeT,
+        ufs_inode: int,
+        inode_data: dict[str, int | list[int]],
+        size: int,
+        fh: FileHandleT | None = None,
+    ) -> dict[str, int | str | list[int] | None]:
+        result = apply_ufs_inode_truncate(self._volume.image, self._volume.filesystem, ufs_inode, inode_data, size)
+        handle = self._open_handles.get(fh)
+        if handle is not None and handle.inode == inode:
+            handle.inode_data = dict(inode_data)
+            handle.inode_data['size'] = size
+            blocks_state = result.get('blocks_state')
+            if blocks_state is not None:
+                handle.inode_data['blocks'] = int(blocks_state)
+            data_blocks_state = result.get('data_blocks_state')
+            allocation_sizes_state = result.get('allocation_sizes_state')
+            pointer_blocks_state = result.get('pointer_blocks_state')
+            handle.data_blocks = list(data_blocks_state) if isinstance(data_blocks_state, list) else None
+            handle.allocation_sizes = list(allocation_sizes_state) if isinstance(allocation_sizes_state, list) else None
+            handle.pointer_blocks = list(pointer_blocks_state) if isinstance(pointer_blocks_state, list) else None
+        self._invalidate_inode_cache(inode, except_handle=fh)
+        return result
 
     def _inode_open_count(self, inode: InodeT) -> int:
         count = 0
@@ -588,6 +749,11 @@ class UFSOperations(pyfuse3.Operations):
             return
         if self._inode_open_count(inode) > 0:
             return
+        # Claim the pending deletion before doing any work so that a concurrent
+        # forget/release for the same inode cannot also pass the checks above and
+        # double-free the inode. finalize_ufs_unlinked_inode is destructive and
+        # must run exactly once per inode.
+        self._pending_deletions.pop(inode, None)
         finalize_ufs_unlinked_inode(
             self._volume.image,
             self._volume.filesystem,
@@ -595,16 +761,29 @@ class UFSOperations(pyfuse3.Operations):
             directory=pending.directory,
         )
         self._flush()
-        self._pending_deletions.pop(inode, None)
         self._inode_path_map.pop(inode, None)
 
     async def forget(self, inode_list: Sequence[tuple[InodeT, int]]) -> None:
-        for inode, nlookup in inode_list:
-            if self._lookup_counts[inode] > nlookup:
-                self._lookup_counts[inode] -= nlookup
-            else:
-                self._lookup_counts.pop(inode, None)
-            self._maybe_finalize_pending_inode(inode)
+        async with self._lock:
+            for inode, nlookup in inode_list:
+                if self._lookup_counts[inode] > nlookup:
+                    self._lookup_counts[inode] -= nlookup
+                else:
+                    self._lookup_counts.pop(inode, None)
+                # forget is a kernel notification with no reply channel, so an
+                # exception here cannot be turned into an errno: it would unwind
+                # out of the pyfuse3 session loop and tear down the entire mount
+                # (the "Transport endpoint is not connected" cascade seen when a
+                # dirty reused image trips deferred-deletion bookkeeping). Keep
+                # the mount alive and let the rsync pass reconcile the tree.
+                try:
+                    self._maybe_finalize_pending_inode(inode)
+                except BaseException:
+                    logging.getLogger(__name__).warning(
+                        'ufs-fuse: deferred deletion of inode %s failed; mount kept alive',
+                        inode,
+                        exc_info=True,
+                    )
 
     async def lookup(self, parent_inode: InodeT, name: bytes, ctx: RequestContext) -> EntryAttributes:
         del ctx
@@ -658,47 +837,33 @@ class UFSOperations(pyfuse3.Operations):
             if not stat.S_ISDIR(entry.st_mode):
                 raise FUSEError(errno.ENOTDIR)
             handle = self._new_handle()
-            self._directory_handles[handle] = inode
+            self._directory_handles[handle] = DirectoryHandle(inode=inode)
             return handle
 
     async def readdir(self, fh: FileHandleT, start_id: int, token: ReaddirToken) -> None:
         started_at = time.perf_counter()
         async with self._lock:
             try:
-                inode = self._directory_handles[fh]
+                directory_handle = self._directory_handles[fh]
+                inode = directory_handle.inode
                 parent_path = self._path_for_inode(inode)
-                _, directory_inode = self._inode_state(inode)
-                for record in iter_ufs_inode_directory_records(self._volume.image, self._volume.filesystem, directory_inode):
-                    if record.inode == 0:
+                for entry_state in self._load_directory_entries(directory_handle):
+                    if entry_state.next_id <= start_id:
                         continue
-                    next_id = record.offset + 1
-                    if next_id <= start_id:
-                        continue
-                    child_name = record.name
+                    child_name = entry_state.name
                     child_path = _join_path(parent_path, child_name)
-                    child_inode_number = int(record.inode)
-                    child_inode = read_ufs_inode(
-                        self._volume.image,
-                        self._volume.filesystem.start_offset,
-                        self._volume.filesystem.details,
-                        child_inode_number,
-                    )
-                    if child_inode is None or int(child_inode['mode']) == 0:
-                        continue
-                    attr = self._entry_from_inode(child_inode_number, child_inode)
-                    if not pyfuse3.readdir_reply(token, os.fsencode(child_name), attr, next_id):
+                    if not pyfuse3.readdir_reply(token, os.fsencode(child_name), entry_state.attr, entry_state.next_id):
                         break
                     if child_name not in {'.', '..'}:
-                        self._add_path(cast(InodeT, attr.st_ino), child_path, increment_lookup=True)
-                        self._cache_directory_entry(self._ufs_inode_number(inode), child_name, child_inode_number, child_inode)
-                        self._remember_directory_name(self._ufs_inode_number(inode), child_name)
+                        self._add_path(cast(InodeT, entry_state.attr.st_ino), child_path, increment_lookup=True)
             except BaseException as error:
                 raise _translate_ufs_error(error) from error
             finally:
                 self._log_slow_operation('readdir', started_at, f'fh={fh} start_id={start_id}')
 
     async def releasedir(self, fh: FileHandleT) -> None:
-        self._directory_handles.pop(fh, None)
+        async with self._lock:
+            self._directory_handles.pop(fh, None)
 
     async def open(self, inode: InodeT, flags: int, ctx: RequestContext) -> FileInfo:
         del ctx
@@ -737,13 +902,14 @@ class UFSOperations(pyfuse3.Operations):
                 raise _translate_ufs_error(error) from error
 
     async def release(self, fh: FileHandleT) -> None:
-        handle = self._open_handles.pop(fh, None)
-        if handle is not None:
-            if handle.dirty:
-                # Honor the per-operation sync policy: sync in interactive mode
-                # (preserving close-time durability), defer in bulk-populate mode.
-                self._flush()
-            self._maybe_finalize_pending_inode(handle.inode)
+        async with self._lock:
+            handle = self._open_handles.pop(fh, None)
+            if handle is not None:
+                if handle.dirty:
+                    # Honor the per-operation sync policy: sync in interactive mode
+                    # (preserving close-time durability), defer in bulk-populate mode.
+                    self._flush()
+                self._maybe_finalize_pending_inode(handle.inode)
 
     async def flush(self, fh: FileHandleT) -> None:
         del fh
@@ -790,19 +956,12 @@ class UFSOperations(pyfuse3.Operations):
                     timestamp=int(time.time()),
                     recompute_summary=False,
                     check_existing=False,
+                    append_directory_entry=True,
                 )
                 self._mark_summary_dirty()
                 self._invalidate_directory_cache(parent_ufs_inode, entry_name)
                 self._flush()
-                new_inode_number = int(result['inode'])
-                new_inode = read_ufs_inode(
-                    self._volume.image,
-                    self._volume.filesystem.start_offset,
-                    self._volume.filesystem.details,
-                    new_inode_number,
-                )
-                if new_inode is None:
-                    raise FUSEError(errno.EIO)
+                new_inode_number, new_inode = self._inode_from_creation_result(cast(dict[str, object], result))
                 entry = self._entry_from_inode(new_inode_number, new_inode)
                 inode = cast(InodeT, entry.st_ino)
                 self._add_path(inode, path, increment_lookup=True)
@@ -842,19 +1001,12 @@ class UFSOperations(pyfuse3.Operations):
                     timestamp=int(time.time()),
                     recompute_summary=False,
                     check_existing=False,
+                    append_directory_entry=True,
                 )
                 self._mark_summary_dirty()
                 self._invalidate_directory_cache(parent_ufs_inode, entry_name)
                 self._flush()
-                new_inode_number = int(result['inode'])
-                new_inode = read_ufs_inode(
-                    self._volume.image,
-                    self._volume.filesystem.start_offset,
-                    self._volume.filesystem.details,
-                    new_inode_number,
-                )
-                if new_inode is None:
-                    raise FUSEError(errno.EIO)
+                new_inode_number, new_inode = self._inode_from_creation_result(cast(dict[str, object], result))
                 entry = self._entry_from_inode(new_inode_number, new_inode)
                 self._add_path(cast(InodeT, entry.st_ino), path, increment_lookup=True)
                 self._cache_directory_entry(parent_ufs_inode, entry_name, new_inode_number, new_inode)
@@ -885,19 +1037,12 @@ class UFSOperations(pyfuse3.Operations):
                     timestamp=int(time.time()),
                     recompute_summary=False,
                     check_existing=False,
+                    append_directory_entry=True,
                 )
                 self._mark_summary_dirty()
                 self._invalidate_directory_cache(parent_ufs_inode, entry_name)
                 self._flush()
-                new_inode_number = int(result['inode'])
-                new_inode = read_ufs_inode(
-                    self._volume.image,
-                    self._volume.filesystem.start_offset,
-                    self._volume.filesystem.details,
-                    new_inode_number,
-                )
-                if new_inode is None:
-                    raise FUSEError(errno.EIO)
+                new_inode_number, new_inode = self._inode_from_creation_result(cast(dict[str, object], result))
                 entry = self._entry_from_inode(new_inode_number, new_inode)
                 self._add_path(cast(InodeT, entry.st_ino), path, increment_lookup=True)
                 self._cache_directory_entry(parent_ufs_inode, entry_name, new_inode_number, new_inode)
@@ -973,19 +1118,12 @@ class UFSOperations(pyfuse3.Operations):
                     timestamp=int(time.time()),
                     recompute_summary=False,
                     check_existing=False,
+                    append_directory_entry=True,
                 )
                 self._mark_summary_dirty()
                 self._invalidate_directory_cache(parent_ufs_inode, entry_name)
                 self._flush()
-                new_inode_number = int(result['inode'])
-                new_inode = read_ufs_inode(
-                    self._volume.image,
-                    self._volume.filesystem.start_offset,
-                    self._volume.filesystem.details,
-                    new_inode_number,
-                )
-                if new_inode is None:
-                    raise FUSEError(errno.EIO)
+                new_inode_number, new_inode = self._inode_from_creation_result(cast(dict[str, object], result))
                 entry = self._entry_from_inode(new_inode_number, new_inode)
                 self._add_path(cast(InodeT, entry.st_ino), path, increment_lookup=True)
                 self._cache_directory_entry(parent_ufs_inode, entry_name, new_inode_number, new_inode)
@@ -1063,6 +1201,12 @@ class UFSOperations(pyfuse3.Operations):
                 self._remove_path(source_fuse_inode, source_path)
                 if overwritten_inode is not None:
                     self._remove_path(overwritten_inode, target_path)
+                    # rename_ufs_path freed the overwritten target inode in place
+                    # (via unlink_ufs_path). Any deferred deletion still queued for
+                    # that inode now refers to storage the allocator may hand back
+                    # out; clear it so a later forget cannot double-free it.
+                    self._pending_deletions.pop(overwritten_inode, None)
+                    self._lookup_counts.pop(overwritten_inode, None)
                 self._add_path(source_fuse_inode, target_path)
                 self._rewrite_path_prefix(source_path, target_path)
                 self._remember_directory_name(self._ufs_inode_number(parent_inode_new), target_name)
@@ -1073,18 +1217,37 @@ class UFSOperations(pyfuse3.Operations):
         del ctx
         async with self._lock:
             try:
-                source_path = self._path_for_inode(inode)
                 parent_path = self._path_for_inode(new_parent_inode)
                 target_name = os.fsdecode(new_name)
                 target_path = _join_path(parent_path, target_name)
-                link_ufs_path(self._volume.image, self._volume.filesystem, source_path, target_path)
-                self._mark_summary_dirty()
-                self._invalidate_directory_cache(self._ufs_inode_number(new_parent_inode), target_name)
+                source_ufs_inode, source_inode = self._inode_state(inode)
+                if ufs_is_directory(source_inode):
+                    raise FUSEError(errno.EPERM)
+                parent_ufs_inode, parent_inode = self._inode_state(new_parent_inode)
+                if target_name in self._directory_names(parent_ufs_inode, parent_inode):
+                    raise FUSEError(errno.EEXIST)
+                add_ufs_directory_entry(
+                    self._volume.image,
+                    self._volume.filesystem,
+                    parent_ufs_inode,
+                    parent_inode,
+                    target_name,
+                    source_ufs_inode,
+                    append_only=True,
+                )
+                write_ufs_inode_nlink(
+                    self._volume.image,
+                    self._volume.filesystem,
+                    source_ufs_inode,
+                    int(source_inode['nlink']) + 1,
+                )
                 self._flush()
-                entry = self._entry_from_path(target_path)
+                linked_inode = dict(source_inode)
+                linked_inode['nlink'] = int(source_inode['nlink']) + 1
+                entry = self._entry_from_inode(source_ufs_inode, linked_inode)
                 self._add_path(inode, target_path, increment_lookup=True)
-                self._cache_directory_entry(self._ufs_inode_number(new_parent_inode), target_name, self._ufs_inode_number(inode), self._inode_state(inode)[1])
-                self._remember_directory_name(self._ufs_inode_number(new_parent_inode), target_name)
+                self._cache_directory_entry(parent_ufs_inode, target_name, source_ufs_inode, linked_inode)
+                self._remember_directory_name(parent_ufs_inode, target_name)
                 return entry
             except BaseException as error:
                 raise _translate_ufs_error(error) from error
@@ -1097,41 +1260,59 @@ class UFSOperations(pyfuse3.Operations):
         fh: FileHandleT | None,
         ctx: RequestContext,
     ) -> EntryAttributes:
-        del fh, ctx
+        del ctx
         async with self._lock:
             try:
                 ufs_inode, current_inode = self._inode_state(inode)
                 changed = False
                 if fields.update_size:
-                    self._truncate(inode, int(attr.st_size))
-                    changed = True
-                    self._mark_summary_dirty()
+                    new_size = int(attr.st_size)
+                    if new_size != int(current_inode['size']):
+                        truncate_result = self._truncate(inode, ufs_inode, current_inode, new_size, fh)
+                        current_inode['size'] = new_size
+                        blocks_state = truncate_result.get('blocks_state')
+                        if blocks_state is not None:
+                            current_inode['blocks'] = int(blocks_state)
+                        changed = True
+                        self._mark_summary_dirty()
                 if fields.update_mode:
                     new_mode = ufs_file_type(int(current_inode['mode'])) | stat.S_IMODE(int(attr.st_mode))
-                    write_ufs_inode_mode(self._volume.image, self._volume.filesystem, ufs_inode, new_mode)
-                    changed = True
+                    if new_mode != int(current_inode['mode']):
+                        write_ufs_inode_mode(self._volume.image, self._volume.filesystem, ufs_inode, new_mode)
+                        current_inode['mode'] = new_mode
+                        changed = True
                 if fields.update_uid or fields.update_gid:
                     uid = int(attr.st_uid) if fields.update_uid else int(current_inode['uid'])
                     gid = int(attr.st_gid) if fields.update_gid else int(current_inode['gid'])
-                    write_ufs_inode_uid_gid(self._volume.image, self._volume.filesystem, ufs_inode, uid, gid)
-                    changed = True
+                    if uid != int(current_inode['uid']) or gid != int(current_inode['gid']):
+                        write_ufs_inode_uid_gid(self._volume.image, self._volume.filesystem, ufs_inode, uid, gid)
+                        current_inode['uid'] = uid
+                        current_inode['gid'] = gid
+                        changed = True
 
                 timestamp_updates: dict[str, int] = {}
                 if fields.update_atime:
-                    timestamp_updates['atime'] = _seconds_from_ns(int(attr.st_atime_ns))
+                    new_atime = _seconds_from_ns(int(attr.st_atime_ns))
+                    if new_atime != int(current_inode['atime']):
+                        timestamp_updates['atime'] = new_atime
                 if fields.update_mtime:
-                    timestamp_updates['mtime'] = _seconds_from_ns(int(attr.st_mtime_ns))
+                    new_mtime = _seconds_from_ns(int(attr.st_mtime_ns))
+                    if new_mtime != int(current_inode['mtime']):
+                        timestamp_updates['mtime'] = new_mtime
                 if fields.update_ctime:
-                    timestamp_updates['ctime'] = _seconds_from_ns(int(attr.st_ctime_ns))
+                    new_ctime = _seconds_from_ns(int(attr.st_ctime_ns))
+                    if new_ctime != int(current_inode['ctime']):
+                        timestamp_updates['ctime'] = new_ctime
                 elif changed:
                     timestamp_updates['ctime'] = int(time.time())
                 if timestamp_updates:
                     write_ufs_inode_times(self._volume.image, self._volume.filesystem, ufs_inode, **timestamp_updates)
+                    current_inode.update(timestamp_updates)
                     changed = True
 
                 if changed:
                     self._flush()
-                return self._entry_from_fuse_inode(inode)
+                return self._entry_from_inode(ufs_inode, current_inode)
             except BaseException as error:
                 raise _translate_ufs_error(error) from error
 
@@ -1180,6 +1361,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--slow-op-ms', type=float, default=0.0, help='Log lookup/getattr/readdir operations slower than this many milliseconds')
     parser.add_argument('--cache-timeout', type=float, default=1.0, help='Kernel entry/attribute cache timeout in seconds (default: 1.0)')
     parser.add_argument('--bulk-populate', action='store_true', default=False, help='Defer fsync to unmount instead of syncing after every operation (much faster for bulk image population)')
+    parser.add_argument('--reconcile-blocks', action='store_true', default=False, help='Walk live inodes at mount time and re-mark as allocated any block a live inode owns but the bitmap marks free (repairs cross-linked/stale inodes left by an unclean guest shutdown). Reserved for reused images; costs one inode-table scan.')
     return parser
 
 
@@ -1194,7 +1376,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         faulthandler.register(signal.SIGUSR1, file=sys.stderr, all_threads=True)
 
     volume = UFSVolume.open_raw_image(options.image, options.slice)
-    operations = UFSOperations(volume, slow_op_ms=options.slow_op_ms, cache_timeout=options.cache_timeout, bulk_populate=options.bulk_populate)
+    operations = UFSOperations(volume, slow_op_ms=options.slow_op_ms, cache_timeout=options.cache_timeout, bulk_populate=options.bulk_populate, reconcile_blocks=options.reconcile_blocks)
+    # Reconcile any inconsistency left by a guest VM that was killed without
+    # unmounting (the common debugging case) before the mount serves I/O.
+    try:
+        operations.reconcile_on_mount()
+    except BaseException:
+        volume.close()
+        raise
     fuse_options = set(pyfuse3.default_options)
     fuse_options.add(f'fsname=svr4-ufs:{options.image.name}:{options.slice}')
     if options.no_default_permissions:

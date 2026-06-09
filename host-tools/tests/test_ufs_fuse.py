@@ -10,7 +10,11 @@ import pyfuse3
 import trio
 
 from host_tools.fs.common import UFS_NDADDR
+from host_tools.fs.ufs import read_cg_block
 from host_tools.fs.ufs import read_ufs_inode
+from host_tools.fs.ufs import set_ufs_inode_state
+from host_tools.fs.ufs import ufs_itog
+from host_tools.fs.ufs import write_cg_block
 from host_tools.fs.ufs import read_ufs_pointer_block
 from host_tools.fs.ufs import resolve_ufs_path
 from host_tools.fs.ufs import ufs_allocation_byte_sizes
@@ -396,6 +400,187 @@ class UFSFuseFrontendTests(unittest.TestCase):
             with self.assertRaises(pyfuse3.FUSEError) as getattr_error:
                 await operations.getattr(inode)
             self.assertEqual(getattr_error.exception.errno, errno.ENOENT)
+
+        trio.run(scenario)
+
+    def test_deferred_unlink_of_hardlinked_file_keeps_inode(self) -> None:
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=0, gid=0, umask=0o022)
+
+            file_info, created = await operations.create(pyfuse3.ROOT_INODE, b'orig.txt', 0o644, os.O_RDWR, ctx)
+            await operations.write(file_info.fh, 0, b'payload')
+            inode = pyfuse3.InodeT(created.st_ino)
+
+            # Second hard link to the same inode (nlink becomes 2).
+            link_attrs = await operations.link(inode, pyfuse3.ROOT_INODE, b'link.txt', ctx)
+            self.assertEqual(link_attrs.st_nlink, 2)
+
+            # Unlink the original while the inode still has an open handle, forcing
+            # the deferred (detach + pending-deletion) path.
+            await operations.unlink(pyfuse3.ROOT_INODE, b'orig.txt', ctx)
+            await operations.release(file_info.fh)
+            await operations.forget([(inode, 1)])
+
+            # The surviving link must still resolve to a live inode with the data
+            # intact; finalization must not have freed the still-linked inode.
+            surviving = await operations.lookup(pyfuse3.ROOT_INODE, b'link.txt', ctx)
+            self.assertEqual(surviving.st_nlink, 1)
+            surviving_info = await operations.open(pyfuse3.InodeT(surviving.st_ino), os.O_RDONLY, ctx)
+            self.assertEqual(await operations.read(surviving_info.fh, 0, 16), b'payload')
+            await operations.release(surviving_info.fh)
+
+            # Removing the last link must now free the inode without a double-free.
+            await operations.unlink(pyfuse3.ROOT_INODE, b'link.txt', ctx)
+            await operations.forget([(pyfuse3.InodeT(surviving.st_ino), 1)])
+
+        trio.run(scenario)
+
+    def test_pending_deletion_does_not_double_free_reallocated_inode(self) -> None:
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=0, gid=0, umask=0o022)
+
+            # Create a file and keep a lookup reference alive so its unlink takes
+            # the deferred (detach + pending-deletion) path.
+            old_file, created = await operations.create(pyfuse3.ROOT_INODE, b'old.txt', 0o644, os.O_RDWR, ctx)
+            old_inode = pyfuse3.InodeT(created.st_ino)
+            await operations.lookup(pyfuse3.ROOT_INODE, b'old.txt', ctx)
+            await operations.unlink(pyfuse3.ROOT_INODE, b'old.txt', ctx)
+            await operations.release(old_file.fh)
+            self.assertIn(old_inode, operations._pending_deletions)
+
+            # Simulate a desynchronized deferred deletion: some other path has
+            # already cleared this inode's cylinder-group bitmap bit (e.g. it was
+            # finalized and the number recycled) while the on-disk inode bytes
+            # (mode != 0, nlink == 0) and the stale pending deletion still linger
+            # under the same FUSE key. Finalization must detect that the inode is no
+            # longer marked used and no-op instead of raising "already free".
+            volume = operations._volume
+            ufs_inode_number = operations._ufs_inode_number(old_inode)
+            cg = ufs_itog(volume.filesystem.details, ufs_inode_number)
+            local = ufs_inode_number % int(volume.filesystem.details['ipg'])
+            cg_bytes = read_cg_block(volume.image, volume.filesystem, cg)
+            set_ufs_inode_state(cg_bytes, local, used=False)
+            write_cg_block(volume.image, volume.filesystem, cg, cg_bytes)
+
+            # The pending forget arrives after the bitmap bit was already cleared.
+            # Drop every outstanding lookup so finalization actually runs; it must
+            # complete without raising "UFS inode N is already free".
+            outstanding = operations._lookup_counts.get(old_inode, 0)
+            await operations.forget([(old_inode, outstanding)])
+            self.assertNotIn(old_inode, operations._pending_deletions)
+
+        trio.run(scenario)
+
+    def test_forget_keeps_mount_alive_when_finalization_raises(self) -> None:
+        # forget() is a kernel notification with no error channel: an exception
+        # must never escape it (that would tear down the whole FUSE session, the
+        # "Transport endpoint is not connected" cascade seen on dirty reused
+        # images). Even an unexpected failure during finalization must be
+        # swallowed so the mount survives and rsync can finish.
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=0, gid=0, umask=0o022)
+
+            file_info, created = await operations.create(pyfuse3.ROOT_INODE, b'doomed.txt', 0o644, os.O_RDWR, ctx)
+            inode = pyfuse3.InodeT(created.st_ino)
+            await operations.lookup(pyfuse3.ROOT_INODE, b'doomed.txt', ctx)
+            await operations.unlink(pyfuse3.ROOT_INODE, b'doomed.txt', ctx)
+            await operations.release(file_info.fh)
+            self.assertIn(inode, operations._pending_deletions)
+
+            outstanding = operations._lookup_counts.get(inode, 0)
+            with mock.patch.object(
+                operations,
+                '_maybe_finalize_pending_inode',
+                side_effect=SystemExit('error: UFS inode is already free'),
+            ):
+                # Must return normally despite the raised SystemExit.
+                await operations.forget([(inode, outstanding)])
+
+        trio.run(scenario)
+
+    def test_reconcile_on_mount_repairs_drifted_summary_and_clears_dirty(self) -> None:
+        from host_tools.fs.ufs import UFS_FS_CLEAN_OFFSET
+        from host_tools.fs.ufs import UFS_FS_CSTOTAL_NIFREE_OFFSET
+        from host_tools.fs.ufs import UFS_FS_FMOD_OFFSET
+        from host_tools.fs.common import u32
+
+        operations, _ = self.build_operations()
+        volume = operations._volume
+        super_offset = volume.filesystem.super_offset
+
+        # Simulate a guest VM killed mid-write: mark the superblock dirty and
+        # corrupt the cached free-inode summary so it disagrees with the bitmaps.
+        volume.image[super_offset + UFS_FS_CLEAN_OFFSET] = 0
+        volume.image[super_offset + UFS_FS_FMOD_OFFSET] = 1
+        true_free = u32(volume.image, super_offset + UFS_FS_CSTOTAL_NIFREE_OFFSET)
+        bogus_free = (true_free + 999).to_bytes(4, 'little', signed=False)
+        volume.image[super_offset + UFS_FS_CSTOTAL_NIFREE_OFFSET:super_offset + UFS_FS_CSTOTAL_NIFREE_OFFSET + 4] = bogus_free
+
+        operations.reconcile_on_mount()
+
+        # Summary recomputed from the bitmaps, and the filesystem marked clean.
+        self.assertEqual(u32(volume.image, super_offset + UFS_FS_CSTOTAL_NIFREE_OFFSET), true_free)
+        self.assertEqual(volume.image[super_offset + UFS_FS_CLEAN_OFFSET], 1)
+        self.assertEqual(volume.image[super_offset + UFS_FS_FMOD_OFFSET], 0)
+
+    def test_reconcile_block_bitmap_remarks_live_block_wrongly_freed(self) -> None:
+        # Reproduce the cross-linked/stale-inode corruption that panics the guest
+        # ("freeing free frag"): a block a live inode still references is marked
+        # free in the cylinder-group bitmap. The block reconcile must re-mark it
+        # allocated; the idempotent-free paths alone cannot, because from the host
+        # side that first free looked legitimate.
+        from host_tools.fs.ufs import is_frag_free
+        from host_tools.fs.ufs import reconcile_ufs_block_bitmap_from_inodes
+        from host_tools.fs.ufs import set_frag_state
+        from host_tools.fs.ufs import ufs_inode_data_blocks
+
+        async def scenario() -> None:
+            operations, _ = self.build_operations()
+            ctx = make_test_context(uid=0, gid=0, umask=0o022)
+            volume = operations._volume
+            fs = volume.filesystem.details
+
+            # A file large enough to own at least one full data block.
+            block_size = int(fs['bsize'])
+            file_info, created = await operations.create(pyfuse3.ROOT_INODE, b'live.bin', 0o644, os.O_RDWR, ctx)
+            await operations.write(file_info.fh, 0, b'x' * (block_size + 16))
+            await operations.release(file_info.fh)
+
+            inode = read_ufs_inode(
+                volume.image,
+                volume.filesystem.start_offset,
+                fs,
+                operations._ufs_inode_number(pyfuse3.InodeT(created.st_ino)),
+            )
+            owned_block = next(b for b in ufs_inode_data_blocks(volume.image, volume.filesystem, inode) if b)
+
+            fpg = int(fs['fpg'])
+            frags_per_block = int(fs['frag'])
+            cg = owned_block // fpg
+            frag_index = owned_block % fpg
+            cg_bytes = read_cg_block(volume.image, volume.filesystem, cg)
+            for offset in range(frags_per_block):
+                set_frag_state(cg_bytes, frag_index + offset, free=True)
+            write_cg_block(volume.image, volume.filesystem, cg, cg_bytes)
+
+            # Precondition: the live inode's block is now (wrongly) marked free.
+            cg_bytes = read_cg_block(volume.image, volume.filesystem, cg)
+            self.assertTrue(is_frag_free(cg_bytes, frag_index))
+
+            repaired = reconcile_ufs_block_bitmap_from_inodes(volume.image, volume.filesystem)
+            self.assertGreaterEqual(repaired, frags_per_block)
+
+            # The block is allocated again, so neither host nor guest will hand it
+            # out and later double-free it.
+            cg_bytes = read_cg_block(volume.image, volume.filesystem, cg)
+            for offset in range(frags_per_block):
+                self.assertFalse(is_frag_free(cg_bytes, frag_index + offset))
+
+            # Idempotent: a second pass over the repaired image repairs nothing.
+            self.assertEqual(reconcile_ufs_block_bitmap_from_inodes(volume.image, volume.filesystem), 0)
 
         trio.run(scenario)
 

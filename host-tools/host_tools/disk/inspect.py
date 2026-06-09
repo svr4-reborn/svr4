@@ -61,16 +61,48 @@ def absolute_sector_for_slice(pdinfo: PdInfo, slice_start_sector: int) -> int:
 
 
 def inspect_slice_by_selector(image_path: Path, selector: str) -> tuple[DiskImageReport, SliceFilesystem]:
-    report = inspect_disk_image(image_path)
-    normalized = selector.strip().lower()
-    for slice_info in report.slice_filesystems:
-        if str(slice_info.slice_index) == normalized:
-            return report, slice_info
-    for slice_info in report.slice_filesystems:
-        for partition in report.vtoc.partitions if report.vtoc else []:
-            if partition.index == slice_info.slice_index and selector.strip().lower() == partition_tag_name(partition.tag):
-                return report, slice_info
-    raise SystemExit(f'error: no slice matching {selector!r} was found')
+    report, slice_info = inspect_slice_metadata_by_selector(image_path, selector)
+    if slice_info.sector_count <= 0:
+        return report, slice_info
+
+    # Probe only the selected slice. The full-image inspector intentionally
+    # reports root entries for every slice, but selector callers often run on
+    # multi-GB images and should not read unrelated slices into memory.
+    if partition_tag_name(slice_info.tag) == 'root':
+        from host_tools.fs.disk_backed import DiskBackedSlice
+        from host_tools.fs.ufs import detect_ufs_at_start, list_ufs_root
+
+        slice_image = DiskBackedSlice(
+            image_path,
+            slice_info.absolute_start_sector * SECTOR_SIZE,
+            slice_info.sector_count * SECTOR_SIZE,
+        )
+        try:
+            filesystem = detect_ufs_at_start(slice_image)
+            if filesystem is not None:
+                slice_info = SliceFilesystem(
+                    slice_index=slice_info.slice_index,
+                    tag=slice_info.tag,
+                    start_sector=slice_info.start_sector,
+                    absolute_start_sector=slice_info.absolute_start_sector,
+                    sector_count=slice_info.sector_count,
+                    filesystem='ufs',
+                    filesystem_offset=filesystem.start_offset,
+                    root_entries=list_ufs_root(slice_image, filesystem),
+                )
+        finally:
+            slice_image.close()
+        return report, slice_info
+
+    slice_image = read_slice_bytes(image_path, slice_info.absolute_start_sector, slice_info.sector_count)
+    return report, probe_slice_filesystem(
+        slice_info.slice_index,
+        slice_info.tag,
+        slice_info.start_sector,
+        slice_info.absolute_start_sector,
+        slice_info.sector_count,
+        slice_image,
+    )
 
 
 def inspect_disk_metadata(image_path: Path) -> DiskImageReport:

@@ -1,8 +1,23 @@
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any
+
+_LOG = logging.getLogger('host_tools.fs.ufs')
+
+
+def warn_inconsistent_ufs_metadata(message: str) -> None:
+    """Report on-disk UFS metadata that disagrees with our in-memory view.
+
+    These inconsistencies are expected when an image is reused after a guest
+    VM was killed without unmounting: the SVR4 kernel mutated the on-disk
+    bitmaps/inodes that our host tools are now trying to reconcile. We warn
+    (rather than aborting) so a single stale entry cannot tear down the whole
+    FUSE mount; the rsync --delete pass reconciles the tree regardless.
+    """
+    _LOG.warning('ufs: %s', message)
 
 from .common import FilesystemCandidate, SECTOR_SIZE, UFS_NDADDR, UFS_ROOT_INODE
 from .ufs_directory import UFS_DIRBLKSIZ, UFSDirectoryEntry, UFSDirectoryInsertSlot, decode_ufs_directory_entry, encode_ufs_directory_entry, find_ufs_directory_insert_slot, insert_ufs_directory_entry, iter_ufs_directory_records, remove_ufs_directory_entry, rewrite_ufs_directory_entry_inode, ufs_dirsiz
@@ -1318,12 +1333,129 @@ def maybe_recompute_ufs_summary_counts(
         recompute_ufs_summary_counts(image, filesystem)
 
 
-def ensure_ufs_metadata_normalized(image: bytearray, filesystem: FilesystemCandidate) -> None:
+def ensure_ufs_metadata_normalized(image: bytearray, filesystem: FilesystemCandidate, *, force: bool = False) -> None:
     state = _ufs_runtime_state(filesystem)
-    if state.get('metadata_normalized'):
+    if state.get('metadata_normalized') and not force:
         return
     recompute_ufs_summary_counts(image, filesystem)
     state['metadata_normalized'] = True
+
+
+def _ufs_inode_owned_fragments(
+    image: bytearray,
+    filesystem: FilesystemCandidate,
+    inode: dict[str, int | list[int]],
+) -> set[int]:
+    """Every absolute fragment index a live inode actually references.
+
+    Data blocks contribute the fragments their allocation size covers (a full
+    block, or the rounded-up fragment run for a trailing partial block); indirect
+    pointer blocks are always full blocks.
+    """
+    fs = filesystem.details
+    frags_per_block = int(fs['frag'])
+    fragment_size = int(fs['fsize'])
+    owned: set[int] = set()
+
+    data_blocks = ufs_inode_data_blocks(image, filesystem, inode)
+    allocation_sizes = ufs_allocation_byte_sizes(fs, int(inode['size']))
+    for index, fs_block in enumerate(data_blocks):
+        if fs_block == 0:
+            continue
+        if index < len(allocation_sizes):
+            frag_count = max(1, allocation_sizes[index] // fragment_size)
+        else:
+            frag_count = frags_per_block
+        for offset in range(frag_count):
+            owned.add(fs_block + offset)
+
+    for fs_block in ufs_inode_pointer_blocks(image, filesystem, inode):
+        if fs_block == 0:
+            continue
+        for offset in range(frags_per_block):
+            owned.add(fs_block + offset)
+    return owned
+
+
+def reconcile_ufs_block_bitmap_from_inodes(image: bytearray, filesystem: FilesystemCandidate) -> int:
+    """Re-mark as allocated any fragment a live inode owns but the bitmap calls free.
+
+    A guest VM killed without unmounting can leave cross-linked or stale inodes:
+    two inodes referencing the same block, where deleting one during population
+    frees that block in the bitmap while the other inode still uses it. The
+    fragment is then marked free yet live, so when the guest later frees it the
+    SVR4 kernel panics with "freeing free frag".
+
+    This is a deliberately one-directional repair: it only ever flips wrongly-free
+    fragments back to allocated (never frees anything), so a truly orphaned block
+    is at worst leaked -- which a later rsync pass or the guest's own fsck can
+    reclaim -- rather than risking the panic. It walks every live inode once
+    (O(used inodes)), so it is reserved for the reused-image path.
+
+    Returns the number of fragments repaired.
+    """
+    ensure_ufs_metadata_normalized(image, filesystem)
+    fs = filesystem.details
+    ipg = int(fs['ipg'])
+    ncg = int(fs['ncg'])
+    fpg = int(fs['fpg'])
+    frags_per_block = int(fs['frag'])
+
+    # Gather all wrongly-free fragments first so we touch each cylinder group's
+    # bitmap once, in order, instead of re-reading it per inode.
+    wrongly_free_by_cg: dict[int, set[int]] = {}
+    for cg in range(ncg):
+        for local_inode in range(ipg):
+            inode_number = cg * ipg + local_inode
+            if inode_number < UFS_ROOT_INODE:
+                continue
+            inode = read_ufs_inode(image, filesystem.start_offset, fs, inode_number)
+            if inode is None or int(inode['mode']) == 0:
+                continue
+            for fs_block in _ufs_inode_owned_fragments(image, filesystem, inode):
+                block_cg = fs_block // fpg
+                frag_index = fs_block % fpg
+                cg_bytes = read_cg_block(image, filesystem, block_cg)
+                if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
+                    continue
+                if is_frag_free(cg_bytes, frag_index):
+                    wrongly_free_by_cg.setdefault(block_cg, set()).add(frag_index)
+
+    repaired = 0
+    for cg, frag_indices in wrongly_free_by_cg.items():
+        cg_bytes = read_cg_block(image, filesystem, cg)
+        if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
+            continue
+        touched_block_bases: set[int] = set()
+        frag_delta = 0
+        for frag_index in frag_indices:
+            block_base = frag_index - (frag_index % frags_per_block)
+            full_frag_mask = (1 << frags_per_block) - 1
+            before = _frag_block_free_bits(cg_bytes, block_base, frags_per_block)
+            set_frag_state(cg_bytes, frag_index, free=False)
+            after = _frag_block_free_bits(cg_bytes, block_base, frags_per_block)
+            repaired += 1
+            # A fully-free block that loses a fragment stops being a free block;
+            # otherwise the change is only to the standalone-fragment tally.
+            if before == full_frag_mask and after != full_frag_mask:
+                adjust_cg_free_blocks(cg_bytes, -1)
+                adjust_superblock_free_blocks(image, filesystem, -1)
+            frag_delta += (
+                _ufs_partial_fragment_contribution(after.bit_count(), frags_per_block)
+                - _ufs_partial_fragment_contribution(before.bit_count(), frags_per_block)
+            )
+            touched_block_bases.add(block_base)
+        if frag_delta:
+            adjust_cg_free_frags(cg_bytes, frag_delta)
+            adjust_superblock_free_frags(image, filesystem, frag_delta)
+        write_cg_block(image, filesystem, cg, cg_bytes)
+
+    if repaired:
+        warn_inconsistent_ufs_metadata(
+            f'reconciled {repaired} fragment(s) that were marked free while still '
+            'referenced by a live inode (cross-linked/stale inodes from an unclean shutdown)'
+        )
+    return repaired
 
 
 def adjust_superblock_free_blocks(image: bytearray, filesystem: FilesystemCandidate, delta: int) -> None:
@@ -1418,6 +1550,17 @@ def allocate_ufs_inode(
     raise SystemExit('error: no free UFS inodes remain for allocation')
 
 
+def _ufs_inode_marked_used(image: bytearray, filesystem: FilesystemCandidate, inode_number: int) -> bool:
+    ensure_ufs_metadata_normalized(image, filesystem)
+    fs = filesystem.details
+    cg = ufs_itog(fs, inode_number)
+    local_inode = inode_number % int(fs['ipg'])
+    cg_bytes = read_cg_block(image, filesystem, cg)
+    if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
+        return False
+    return is_ufs_inode_used(cg_bytes, local_inode)
+
+
 def free_ufs_inode(image: bytearray, filesystem: FilesystemCandidate, inode_number: int, directory: bool = False) -> None:
     ensure_ufs_metadata_normalized(image, filesystem)
     fs = filesystem.details
@@ -1425,9 +1568,21 @@ def free_ufs_inode(image: bytearray, filesystem: FilesystemCandidate, inode_numb
     local_inode = inode_number % int(fs['ipg'])
     cg_bytes = read_cg_block(image, filesystem, cg)
     if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
-        raise SystemExit(f'error: invalid cylinder group {cg} while freeing UFS inode {inode_number}')
+        warn_inconsistent_ufs_metadata(
+            f'invalid cylinder group {cg} while freeing inode {inode_number}; skipping'
+        )
+        return
     if not is_ufs_inode_used(cg_bytes, local_inode):
-        raise SystemExit(f'error: UFS inode {inode_number} is already free')
+        # The on-disk bitmap already marks this inode free. This happens when a
+        # killed VM freed the inode itself before we reused the dirty image.
+        # Adjusting counts here would double-decrement the free-inode summary,
+        # so treat freeing an already-free inode as a no-op (but still clear the
+        # dinode below, which is idempotent).
+        warn_inconsistent_ufs_metadata(
+            f'inode {inode_number} is already free in the bitmap; skipping bitmap/count update'
+        )
+        clear_ufs_inode(image, filesystem, inode_number)
+        return
     set_ufs_inode_state(cg_bytes, local_inode, used=False)
     adjust_cg_free_inodes(cg_bytes, 1)
     if directory:
@@ -1549,11 +1704,37 @@ def free_ufs_block(image: bytearray, filesystem: FilesystemCandidate, fs_block: 
     frag_index = fs_block % frags_per_group
     cg_bytes = read_cg_block(image, filesystem, cg)
     if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
-        raise SystemExit(f'error: invalid cylinder group {cg} while freeing UFS block {fs_block}')
+        warn_inconsistent_ufs_metadata(
+            f'invalid cylinder group {cg} while freeing block {fs_block}; skipping'
+        )
+        return
+    # On a dirty reused image some of these fragments may already be marked free
+    # (the killed VM freed them, or two stale inodes cross-reference the same
+    # block). Blindly setting them free and crediting one whole block would
+    # inflate the free-block count and leave the bitmap claiming a frag is free
+    # while a surviving inode still uses it -- exactly the on-disk state that
+    # makes the SVR4 kernel panic with "freeing free frag" later. Deriving every
+    # count adjustment from the actual before/after bitmap transition makes the
+    # free idempotent: a fully-free block is a true no-op.
+    full_frag_mask = (1 << frags_per_block) - 1
+    free_before = _frag_block_free_bits(cg_bytes, frag_index, frags_per_block)
+    if free_before == full_frag_mask:
+        warn_inconsistent_ufs_metadata(
+            f'block {fs_block} is already entirely free; skipping double-free'
+        )
+        return
+    free_before_count = free_before.bit_count()
     for frag_offset in range(frags_per_block):
         set_frag_state(cg_bytes, frag_index + frag_offset, free=True)
+    # The newly-whole free block reclaims its fragments as a block, so retire the
+    # standalone-fragment contribution any already-free fragments were counted as.
+    frag_delta = -_ufs_partial_fragment_contribution(free_before_count, frags_per_block)
+    if frag_delta:
+        adjust_cg_free_frags(cg_bytes, frag_delta)
     adjust_cg_free_blocks(cg_bytes, 1)
     write_cg_block(image, filesystem, cg, cg_bytes)
+    if frag_delta:
+        adjust_superblock_free_frags(image, filesystem, frag_delta)
     adjust_superblock_free_blocks(image, filesystem, 1)
 
 
@@ -1581,12 +1762,31 @@ def free_ufs_allocation(image: bytearray, filesystem: FilesystemCandidate, fs_bl
     frag_index = fs_block % frags_per_group
     cg_bytes = read_cg_block(image, filesystem, cg)
     if u32(cg_bytes, UFS_CG_MAGIC_OFFSET) != UFS_CG_MAGIC:
-        raise SystemExit(f'error: invalid cylinder group {cg} while freeing UFS allocation at block {fs_block}')
+        warn_inconsistent_ufs_metadata(
+            f'invalid cylinder group {cg} while freeing allocation at block {fs_block}; skipping'
+        )
+        return
     block_base = frag_index - (frag_index % frags_per_block)
     full_frag_mask = (1 << frags_per_block) - 1
-    free_before = _frag_block_free_bits(cg_bytes, block_base, frags_per_block).bit_count()
+    free_before_bits = _frag_block_free_bits(cg_bytes, block_base, frags_per_block)
+    free_before = free_before_bits.bit_count()
+    # Only flip fragments that are currently allocated. On a dirty reused image a
+    # fragment we are about to free may already be marked free; double-freeing it
+    # would inflate the free counts and corrupt the bitmap, which later panics the
+    # SVR4 kernel ("freeing free frag"). Setting only real transitions, and
+    # crediting a whole block only when the block actually becomes fully free,
+    # makes this free idempotent.
+    already_free = 0
     for frag_offset in range(frags_to_free):
+        if is_frag_free(cg_bytes, frag_index + frag_offset):
+            already_free += 1
+            continue
         set_frag_state(cg_bytes, frag_index + frag_offset, free=True)
+    if already_free:
+        warn_inconsistent_ufs_metadata(
+            f'{already_free} of {frags_to_free} fragments at block {fs_block} were already free; '
+            'skipping their double-free'
+        )
     free_after_bits = _frag_block_free_bits(cg_bytes, block_base, frags_per_block)
     free_after = free_after_bits.bit_count()
     frag_delta = (
@@ -1596,7 +1796,7 @@ def free_ufs_allocation(image: bytearray, filesystem: FilesystemCandidate, fs_bl
     if frag_delta:
         adjust_cg_free_frags(cg_bytes, frag_delta)
         adjust_superblock_free_frags(image, filesystem, frag_delta)
-    if free_after_bits == full_frag_mask:
+    if free_after_bits == full_frag_mask and free_before_bits != full_frag_mask:
         adjust_cg_free_blocks(cg_bytes, 1)
         adjust_superblock_free_blocks(image, filesystem, 1)
     write_cg_block(image, filesystem, cg, cg_bytes)
@@ -2004,6 +2204,7 @@ def apply_ufs_inode_truncate(
     current_allocation_sizes = ufs_allocation_byte_sizes(filesystem.details, old_size)
     requested_allocation_sizes = ufs_allocation_byte_sizes(filesystem.details, size)
     original_data_block_count = len(current_data_blocks)
+    block_size = int(filesystem.details['bsize'])
 
     if requested_allocation_sizes == current_allocation_sizes:
         if size > old_size:
@@ -2019,11 +2220,13 @@ def apply_ufs_inode_truncate(
             'old_pointer_blocks': 0,
             'new_pointer_blocks': 0,
             'strategy': 'in-place',
+            'data_blocks_state': current_data_blocks,
+            'allocation_sizes_state': requested_allocation_sizes,
         }
 
     current_pointer_blocks = ufs_inode_pointer_blocks(image, filesystem, inode)
     original_pointer_block_count = len(current_pointer_blocks)
-    rebuilt_data_blocks, _, new_pointer_block_count, _ = reallocate_ufs_inode_suffix(
+    rebuilt_data_blocks, _, new_pointer_block_count, new_pointer_blocks = reallocate_ufs_inode_suffix(
         image,
         filesystem,
         inode_number,
@@ -2033,9 +2236,11 @@ def apply_ufs_inode_truncate(
         requested_allocation_sizes,
         min(old_size, size),
     )
-    if size > old_size:
-        zero_ufs_data_range(image, filesystem, rebuilt_data_blocks, requested_allocation_sizes, old_size, size - old_size)
     write_ufs_inode_size(image, filesystem, inode_number, size)
+    new_blocks = (
+        sum(allocation_bytes // SECTOR_SIZE for allocation_bytes in requested_allocation_sizes)
+        + (new_pointer_block_count * (block_size // SECTOR_SIZE))
+    )
     return {
         'target_path': target_label,
         'inode': inode_number,
@@ -2046,6 +2251,10 @@ def apply_ufs_inode_truncate(
         'old_pointer_blocks': original_pointer_block_count,
         'new_pointer_blocks': new_pointer_block_count,
         'strategy': 'reallocated-suffix',
+        'data_blocks_state': rebuilt_data_blocks,
+        'allocation_sizes_state': requested_allocation_sizes,
+        'pointer_blocks_state': new_pointer_blocks,
+        'blocks_state': new_blocks,
     }
 
 
@@ -2262,6 +2471,8 @@ def add_ufs_directory_entry(
     directory_inode: dict[str, int | list[int]],
     entry_name: str,
     child_inode_number: int,
+    *,
+    append_only: bool = False,
 ) -> dict[str, int | str | list[int] | None]:
     directory_size = int(directory_inode['size'])
     rounded_length = ((directory_size + UFS_DIRBLKSIZ - 1) // UFS_DIRBLKSIZ) * UFS_DIRBLKSIZ
@@ -2291,6 +2502,9 @@ def add_ufs_directory_entry(
                 return apply_ufs_inode_write(
                     image, filesystem, directory_inode_number, directory_inode, last_block_offset, updated_block
                 )
+    if append_only:
+        new_block = insert_ufs_directory_entry(b'', 0, child_inode_number, entry_name)
+        return apply_ufs_inode_write(image, filesystem, directory_inode_number, directory_inode, rounded_length, new_block)
 
     directory_bytes = read_ufs_inode_bytes(image, filesystem, directory_inode)
     for block_offset in range(0, rounded_length, UFS_DIRBLKSIZ):
@@ -2406,7 +2620,8 @@ def create_ufs_file_in_parent(
     timestamp: int = 0,
     recompute_summary: bool = True,
     check_existing: bool = True,
-) -> dict[str, int | str]:
+    append_directory_entry: bool = False,
+) -> dict[str, int | str | dict[str, int | list[int]]]:
     if not ufs_is_directory(parent_inode):
         raise SystemExit('error: parent inode is not a UFS directory')
     if check_existing and lookup_ufs_directory_entry(image, filesystem, parent_inode, entry_name) is not None:
@@ -2416,12 +2631,43 @@ def create_ufs_file_in_parent(
     file_type = ufs_file_type(mode) or UFS_IFREG
     permissions = mode & ~UFS_IFMT
     initialize_ufs_inode(image, filesystem, new_inode_number, file_type | permissions, uid=uid, gid=gid, nlink=1, timestamp=timestamp)
-    new_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, new_inode_number)
-    if new_inode is None:
-        raise SystemExit(f'error: failed to re-read newly allocated UFS inode {new_inode_number}')
+    new_inode: dict[str, int | list[int]] = {
+        'mode': file_type | permissions,
+        'nlink': 1,
+        'uid': uid,
+        'gid': gid,
+        'atime': timestamp,
+        'mtime': timestamp,
+        'ctime': timestamp,
+        'size': 0,
+        'direct_blocks': [0] * UFS_NDADDR,
+        'indirect_blocks': [0, 0, 0],
+        'blocks': 0,
+    }
     try:
-        apply_ufs_inode_replacement(image, filesystem, new_inode_number, new_inode, file_bytes, target_path=target_path)
-        add_ufs_directory_entry(image, filesystem, parent_inode_number, parent_inode, entry_name, new_inode_number)
+        if file_bytes:
+            apply_ufs_inode_write(
+                image,
+                filesystem,
+                new_inode_number,
+                new_inode,
+                0,
+                file_bytes,
+                target_path=target_path,
+                current_data_blocks=[],
+                current_allocation_sizes=[],
+                current_pointer_blocks=[],
+            )
+            new_inode['size'] = len(file_bytes)
+        add_ufs_directory_entry(
+            image,
+            filesystem,
+            parent_inode_number,
+            parent_inode,
+            entry_name,
+            new_inode_number,
+            append_only=append_directory_entry,
+        )
     except Exception:
         rollback_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, new_inode_number)
         if rollback_inode is not None:
@@ -2430,7 +2676,13 @@ def create_ufs_file_in_parent(
         free_ufs_inode(image, filesystem, new_inode_number)
         raise
     maybe_recompute_ufs_summary_counts(image, filesystem, recompute_summary=recompute_summary)
-    return {'operation': 'create', 'path': target_path or entry_name, 'inode': new_inode_number, 'size': len(file_bytes)}
+    return {
+        'operation': 'create',
+        'path': target_path or entry_name,
+        'inode': new_inode_number,
+        'size': len(file_bytes),
+        'inode_data': new_inode,
+    }
 
 
 def create_ufs_special_file(
@@ -2532,6 +2784,7 @@ def make_ufs_directory_in_parent(
     timestamp: int = 0,
     recompute_summary: bool = True,
     check_existing: bool = True,
+    append_directory_entry: bool = False,
 ) -> dict[str, int | str]:
     if not ufs_is_directory(parent_inode):
         raise SystemExit('error: parent inode is not a UFS directory')
@@ -2553,7 +2806,15 @@ def make_ufs_directory_in_parent(
             build_ufs_directory_block(new_inode_number, parent_inode_number),
             target_path=target_path,
         )
-        add_ufs_directory_entry(image, filesystem, parent_inode_number, parent_inode, entry_name, new_inode_number)
+        add_ufs_directory_entry(
+            image,
+            filesystem,
+            parent_inode_number,
+            parent_inode,
+            entry_name,
+            new_inode_number,
+            append_only=append_directory_entry,
+        )
         write_ufs_inode_nlink(image, filesystem, parent_inode_number, int(parent_inode['nlink']) + 1)
     except Exception:
         rollback_inode = read_ufs_inode(image, filesystem.start_offset, filesystem.details, new_inode_number)
@@ -2674,6 +2935,25 @@ def finalize_ufs_unlinked_inode(
     if inode is None:
         return
     if int(inode['mode']) == 0:
+        return
+    # The detach path only decremented nlink; if other hard links still reference
+    # this inode it must stay allocated. Freeing it here would clear a bitmap bit
+    # that is still live, and the next operation touching the inode (or the final
+    # unlink of the last link) would then double-free it.
+    if int(inode['nlink']) > 0:
+        return
+    # Defensive guard against a desynchronized deferred deletion. We key FUSE
+    # inodes 1:1 on the UFS inode number, so a stale pending deletion can outlive
+    # the file it referred to (e.g. the number was already freed and recycled).
+    # If the cylinder-group bitmap no longer marks this inode as used, it has
+    # already been freed by some other path (most commonly: a killed VM freed it
+    # on-disk before we reused the dirty image). Freeing it again, or rewriting
+    # its (now possibly recycled) contents, would corrupt live state. Treat
+    # finalization as a no-op in that case.
+    if not _ufs_inode_marked_used(image, filesystem, inode_number):
+        warn_inconsistent_ufs_metadata(
+            f'deferred deletion of inode {inode_number} skipped: already free on disk'
+        )
         return
     free_ufs_inode_contents(image, filesystem, inode_number, inode)
     clear_ufs_inode(image, filesystem, inode_number)

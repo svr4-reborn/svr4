@@ -6,7 +6,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from host_tools.disk.inspect import inspect_slice_by_selector, read_slice_bytes
+from host_tools.disk.inspect import inspect_slice_metadata_by_selector
+from host_tools.fs.disk_backed import DiskBackedSlice
 
 from .common import SECTOR_SIZE
 from .ufs import UFS_CG_CS_NBFREE_OFFSET
@@ -21,10 +22,12 @@ from .ufs import UFS_FS_CSTOTAL_NBFREE_OFFSET
 from .ufs import UFS_FS_CSTOTAL_NDIR_OFFSET
 from .ufs import UFS_FS_CSTOTAL_NFFREE_OFFSET
 from .ufs import UFS_FS_CSTOTAL_NIFREE_OFFSET
+from .ufs import UFS_IFBLK
+from .ufs import UFS_IFCHR
 from .ufs import UFS_IFMT
 from .ufs import clear_ufs_inode
 from .ufs import delete_ufs_directory_entry
-from .ufs import detect_ufs
+from .ufs import detect_ufs_at_start
 from .ufs import is_frag_free
 from .ufs import is_ufs_inode_used
 from .ufs import iter_ufs_inode_directory_records
@@ -321,6 +324,13 @@ def analyze_ufs_filesystem(
                         details={'mode': int(inode['mode'])},
                     )
                 )
+            # Character and block special files store the device number in
+            # di_db[0] rather than a data block pointer, and carry no allocated
+            # blocks. Scanning them as if di_db[] held block pointers (as the
+            # original SVR4 fsck pass1 deliberately avoids) misreads the rdev as
+            # a bogus/duplicate block and trips the block-count check.
+            if (int(inode['mode']) & UFS_IFMT) in (UFS_IFCHR, UFS_IFBLK):
+                continue
             counted_fragments = _scan_inode_blocks(image, filesystem, fs, inode_number, inode, seen_blocks, issues)
             expected_sectors = counted_fragments * (int(fs['fsize']) // SECTOR_SIZE)
             if expected_sectors != int(inode['blocks']):
@@ -580,15 +590,24 @@ def analyze_ufs_filesystem(
 
 
 def analyze_ufs_image(image_path: Path, slice_selector: str) -> UFSFsckReport:
-    _, slice_fs = inspect_slice_by_selector(image_path, slice_selector)
-    slice_image = read_slice_bytes(image_path, slice_fs.absolute_start_sector, slice_fs.sector_count)
-    filesystem = detect_ufs(slice_image)[0]
-    return analyze_ufs_filesystem(
-        slice_image,
-        filesystem,
-        image_label=str(image_path),
-        slice_label=slice_selector,
+    _, slice_fs = inspect_slice_metadata_by_selector(image_path, slice_selector)
+    slice_image = DiskBackedSlice(
+        image_path,
+        slice_fs.absolute_start_sector * SECTOR_SIZE,
+        slice_fs.sector_count * SECTOR_SIZE,
     )
+    try:
+        filesystem = detect_ufs_at_start(slice_image)
+        if filesystem is None:
+            raise SystemExit(f'error: failed to detect a UFS filesystem inside slice {slice_selector!r}')
+        return analyze_ufs_filesystem(
+            slice_image,
+            filesystem,
+            image_label=str(image_path),
+            slice_label=slice_selector,
+        )
+    finally:
+        slice_image.close()
 
 
 def repair_ufs_filesystem(image: bytearray, filesystem: Any, report: UFSFsckReport | None = None) -> tuple[list[int], bool]:
@@ -681,27 +700,33 @@ def repair_ufs_filesystem(image: bytearray, filesystem: Any, report: UFSFsckRepo
 
 
 def repair_ufs_image(image_path: Path, slice_selector: str) -> tuple[list[int], UFSFsckReport]:
-    _, slice_fs = inspect_slice_by_selector(image_path, slice_selector)
-    slice_image = bytearray(read_slice_bytes(image_path, slice_fs.absolute_start_sector, slice_fs.sector_count))
-    filesystem = detect_ufs(slice_image)[0]
-    initial_report = analyze_ufs_filesystem(
-        slice_image,
-        filesystem,
-        image_label=str(image_path),
-        slice_label=slice_selector,
+    _, slice_fs = inspect_slice_metadata_by_selector(image_path, slice_selector)
+    slice_image = DiskBackedSlice(
+        image_path,
+        slice_fs.absolute_start_sector * SECTOR_SIZE,
+        slice_fs.sector_count * SECTOR_SIZE,
     )
-    cleared_inodes, modified = repair_ufs_filesystem(slice_image, filesystem, initial_report)
-    if modified:
-        with image_path.open('r+b') as image_file:
-            image_file.seek(slice_fs.absolute_start_sector * SECTOR_SIZE)
-            image_file.write(slice_image)
-    final_report = analyze_ufs_filesystem(
-        slice_image,
-        filesystem,
-        image_label=str(image_path),
-        slice_label=slice_selector,
-    )
-    return cleared_inodes, final_report
+    try:
+        filesystem = detect_ufs_at_start(slice_image)
+        if filesystem is None:
+            raise SystemExit(f'error: failed to detect a UFS filesystem inside slice {slice_selector!r}')
+        initial_report = analyze_ufs_filesystem(
+            slice_image,
+            filesystem,
+            image_label=str(image_path),
+            slice_label=slice_selector,
+        )
+        cleared_inodes, _modified = repair_ufs_filesystem(slice_image, filesystem, initial_report)
+        slice_image.flush(sync=True)
+        final_report = analyze_ufs_filesystem(
+            slice_image,
+            filesystem,
+            image_label=str(image_path),
+            slice_label=slice_selector,
+        )
+        return cleared_inodes, final_report
+    finally:
+        slice_image.close()
 
 
 def build_parser() -> argparse.ArgumentParser:

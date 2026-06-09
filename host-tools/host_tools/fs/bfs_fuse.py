@@ -18,7 +18,7 @@ import pyfuse3
 import trio
 from pyfuse3 import EntryAttributes, FileHandleT, FileInfo, FUSEError, InodeT, ReaddirToken, RequestContext, SetattrFields, StatvfsData
 
-from host_tools.disk.inspect import inspect_slice_by_selector, read_slice_bytes
+from host_tools.disk.inspect import inspect_slice_metadata_by_selector, read_slice_bytes
 from host_tools.fs.bfs import BFS_VDIR, bfs_allocated_bytes, bfs_file_size
 from host_tools.fs.bfs import detect_bfs
 from host_tools.fs.bfs_backend import BFSBackend
@@ -160,10 +160,7 @@ class BFSVolume:
     @classmethod
     def open_raw_image(cls, image_path: Path, slice_selector: str) -> 'BFSVolume':
         resolved_path = image_path.resolve()
-        _, slice_info = inspect_slice_by_selector(resolved_path, slice_selector)
-        if slice_info.filesystem != 'bfs':
-            raise SystemExit(f'error: slice {slice_selector!r} is not a BFS filesystem')
-
+        _, slice_info = inspect_slice_metadata_by_selector(resolved_path, slice_selector)
         slice_image = bytearray(read_slice_bytes(resolved_path, slice_info.absolute_start_sector, slice_info.sector_count))
         candidates = detect_bfs(bytes(slice_image))
         if not candidates:
