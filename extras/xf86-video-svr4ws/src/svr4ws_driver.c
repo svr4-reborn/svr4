@@ -44,7 +44,7 @@
 #define SVR4WS_DEPTH 8
 #define SVR4WS_BPP 8
 #define SVR4WS_PLANES 4
-#define SVR4WS_HW_COLORS 16
+#define SVR4WS_HW_COLORS 256
 #define SVR4WS_COLORMAP_ENTRIES 256
 
 #define SYS_CLOCAL 127
@@ -60,6 +60,8 @@
 #define KDDISPINFO (KIOC | 18)
 #define KDENABIO (KIOC | 60)
 #define KDDISABIO (KIOC | 61)
+#define KD_SET_CUSTOM_MODE (('K' << 8) | 120)
+#define KD_GET_CUSTOM_MODE (('K' << 8) | 121)
 
 #define CONSIOC ('c' << 8)
 #define CONS_GET (CONSIOC | 2)
@@ -69,6 +71,9 @@
 #define SW_VDC800x600E (MODESWITCH | DM_VDC800x600E)
 
 #define KD_GRAPHICS 1
+
+#define SVR4WS_BANK_APERTURE (64 * 1024)
+#define SVR4WS_BANK_GRANULARITY (16 * 1024)
 
 #ifndef HW_SKIP_CONSOLE
 #define HW_SKIP_CONSOLE 4
@@ -85,6 +90,53 @@ struct kd_memloc {
     char *physaddr;
     long length;
     long ioflg;
+};
+
+struct egainit {
+    unsigned char  ei_hortot;
+    unsigned char  ei_hde;
+    unsigned char  ei_shb;
+    unsigned char  ei_ehb;
+    unsigned char  ei_shr;
+    unsigned char  ei_ehr;
+    unsigned char  ei_vertot;
+    unsigned char  ei_ovflow;
+    unsigned char  ei_prs;
+    unsigned char  ei_maxscn;
+    unsigned char  ei_curbeg;
+    unsigned char  ei_curend;
+    unsigned char  ei_stadh;
+    unsigned char  ei_stadl;
+    unsigned char  ei_cursh;
+    unsigned char  ei_cursl;
+    unsigned char  ei_vrs;
+    unsigned char  ei_vre;
+    unsigned char  ei_vde;
+    unsigned char  ei_offset;
+    unsigned char  ei_undloc;
+    unsigned char  ei_svb;
+    unsigned char  ei_evb;
+    unsigned char  ei_mode;
+    unsigned char  ei_lcomp;
+};
+
+struct b_param {
+    unsigned char  fill[5];
+    unsigned char  seqtab[4];
+    unsigned char  miscreg;
+    struct egainit egatab;
+    unsigned char  attrtab[20];
+    unsigned char  graphtab[9];
+};
+
+struct kd_custom_mode {
+    unsigned short xpix;
+    unsigned short ypix;
+    unsigned short colors;
+    unsigned long  buf_size;
+    unsigned long  map_size;
+    unsigned short slbytes;
+    struct b_param regs;
 };
 
 typedef enum {
@@ -114,6 +166,8 @@ typedef struct {
     unsigned char *shadow;
     size_t shadow_size;
     int shadow_stride;
+    int framebuffer_stride;
+    int custom_mode_number;
     OptionInfoPtr options;
     CloseScreenProcPtr CloseScreen;
     Bool (*ShadowFBInit)(ScreenPtr pScreen, RefreshAreaFuncPtr refreshArea);
@@ -240,6 +294,7 @@ SVR4WSGetRec(ScrnInfoPtr pScrn)
     SVR4WSPTR(pScrn)->kd_fd = -1;
     SVR4WSPTR(pScrn)->original_console_mode = -1;
     SVR4WSPTR(pScrn)->original_kd_mode = -1;
+    SVR4WSPTR(pScrn)->custom_mode_number = -1;
     return TRUE;
 }
 
@@ -311,7 +366,7 @@ SVR4WSReserveMapping(size_t size)
 static inline void
 SVR4WSWritePort8(unsigned short port, unsigned char value)
 {
-    __asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
+    __asm__ __volatile__("outb %0, %w1" : : "a"(value), "Nd"(port) : "memory");
 }
 
 static void
@@ -455,6 +510,19 @@ SVR4WSRestoreTextMode(ScrnInfoPtr pScrn)
     SVR4WSPtr fPtr;
 
     fPtr = SVR4WSPTR(pScrn);
+    if (fPtr->io_enabled) {
+        /* Unlock extensions */
+        SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x06, 0x12);
+        /* Disable packed-pixel mode */
+        SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x07, 0x00);
+        /* Disable extensions control */
+        SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x0b, 0x00);
+        /* Clear bank offsets */
+        SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x09, 0x00);
+        SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x0a, 0x00);
+        /* Lock extensions */
+        SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x06, 0x00);
+    }
     SVR4WSUnmapDisplay(pScrn);
     SVR4WSDisableVGAIO(pScrn);
     if (fPtr->kd_fd >= 0) {
@@ -512,66 +580,42 @@ SVR4WSRefreshArea(ScrnInfoPtr pScrn, int count, BoxPtr boxes)
     }
     SVR4WSDebugRefresh(count, boxes);
 
-    SVR4WSSetVGAByteMask(0xff);
-    for (box_index = 0; box_index < count; ++box_index) {
-        int x1;
-        int y1;
-        int x2;
-        int y2;
-        int plane;
+    int current_bank = -1;
 
-        x1 = boxes[box_index].x1;
-        y1 = boxes[box_index].y1;
-        x2 = boxes[box_index].x2;
-        y2 = boxes[box_index].y2;
-        if (x1 < 0)
-            x1 = 0;
-        if (y1 < 0)
-            y1 = 0;
-        if (x2 > SVR4WS_WIDTH)
-            x2 = SVR4WS_WIDTH;
-        if (y2 > SVR4WS_HEIGHT)
-            y2 = SVR4WS_HEIGHT;
+    for (box_index = 0; box_index < count; ++box_index) {
+        int x1 = boxes[box_index].x1;
+        int y1 = boxes[box_index].y1;
+        int x2 = boxes[box_index].x2;
+        int y2 = boxes[box_index].y2;
+
+        if (x1 < 0) x1 = 0;
+        if (y1 < 0) y1 = 0;
+        if (x2 > SVR4WS_WIDTH) x2 = SVR4WS_WIDTH;
+        if (y2 > SVR4WS_HEIGHT) y2 = SVR4WS_HEIGHT;
         if (x1 >= x2 || y1 >= y2)
             continue;
 
-        for (plane = 0; plane < SVR4WS_PLANES; ++plane) {
-            int y;
+        int y;
+        for (y = y1; y < y2; ++y) {
+            int x;
+            const unsigned char *src = fPtr->shadow + ((size_t)y * (size_t)fPtr->shadow_stride);
+            size_t row_offset = (size_t)y * (size_t)fPtr->framebuffer_stride;
 
-            SVR4WSSetVGAPlaneMask((unsigned char)(1U << plane));
-            for (y = y1; y < y2; ++y) {
-                const unsigned char *source_row;
-                volatile unsigned char *destination_row;
-                int xbyte_start;
-                int xbyte_end;
-                int xbyte;
+            for (x = x1; x < x2; ++x) {
+                size_t offset = row_offset + (size_t)x;
+                size_t bank_base = offset & ~((size_t)SVR4WS_BANK_APERTURE - 1U);
+                int bank = (int)(bank_base / SVR4WS_BANK_GRANULARITY);
+                size_t bank_offset = offset - bank_base;
 
-                source_row = fPtr->shadow + ((size_t)y * (size_t)fPtr->shadow_stride);
-                destination_row = fPtr->framebuffer + ((size_t)y * ((SVR4WS_WIDTH + 7U) / 8U));
-                xbyte_start = x1 / 8;
-                xbyte_end = (x2 + 7) / 8;
-                for (xbyte = xbyte_start; xbyte < xbyte_end; ++xbyte) {
-                    unsigned char value;
-                    int bit;
-
-                    value = 0;
-                    for (bit = 0; bit < 8; ++bit) {
-                        int x;
-                        unsigned char color;
-
-                        x = (xbyte * 8) + bit;
-                        if (x >= SVR4WS_WIDTH)
-                            continue;
-                        color = source_row[x];
-                        if (color & (1U << plane))
-                            value |= (unsigned char)(1U << (7 - bit));
-                    }
-                    destination_row[xbyte] = value;
+                if (bank != current_bank) {
+                    SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x09, (unsigned char)bank);
+                    current_bank = bank;
                 }
+
+                fPtr->framebuffer[bank_offset] = src[x];
             }
         }
     }
-    SVR4WSSetVGAPlaneMask(0x0f);
 }
 
 static const OptionInfoRec *
@@ -672,6 +716,12 @@ SVR4WSPreInit(ScrnInfoPtr pScrn, int flags)
     xf86ProcessOptions(pScrn->scrnIndex, pScrn->options, fPtr->options);
     fPtr->device_path = xf86GetOptValString(fPtr->options, OPTION_DEVICE);
     fPtr->vt_path = xf86GetOptValString(fPtr->options, OPTION_VT);
+    {
+        const char *configured_mode = xf86GetOptValString(fPtr->options, OPTION_MODE);
+        if (configured_mode && strcmp(configured_mode, "vdc800x600e") != 0) {
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "configured mode '%s' is not supported; falling back to vdc800x600e\n", configured_mode);
+        }
+    }
 
     pScrn->videoRam = 512;
     pScrn->virtualX = SVR4WS_WIDTH;
@@ -727,18 +777,70 @@ SVR4WSEnterVT(VT_FUNC_ARGS_DECL)
             fPtr->original_kd_mode = -1;
     }
 
-    if (!SVR4WSEnableVGAIO(pScrn))
-        return FALSE;
-    if (ioctl(fPtr->kd_fd, SW_VDC800x600E, 0) < 0) {
-        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "SW_VDC800x600E failed: %s\n", strerror(errno));
+    if (!SVR4WSEnableVGAIO(pScrn)) {
+        SVR4WSRestoreTextMode(pScrn);
         return FALSE;
     }
+    {
+        struct kd_custom_mode custom_mode = {
+            800, 600, 256, 800 * 600, SVR4WS_BANK_APERTURE, 800,
+            {
+                {0x00, 0x00, 0x00, 0x00, 0x00},
+                {0x01, 0x0f, 0x00, 0x0e},
+                0x2f,
+                {
+                    0x7b, 0x63, 0x64, 0x9e, 0x69, 0x92, 0x6f, 0xf0,
+                    0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0x58, 0x8a, 0x57, 0x64, 0x40, 0x58, 0x6f, 0xa3, 0xff
+                },
+                {
+                    0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                    0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x41, 0x00, 0x0f, 0x00
+                },
+                {
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0f, 0xff
+                }
+            }
+        };
+
+        fPtr->framebuffer_stride = custom_mode.slbytes;
+        if (ioctl(fPtr->kd_fd, KD_SET_CUSTOM_MODE, &custom_mode) < 0) {
+            xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "KD_SET_CUSTOM_MODE failed: %s\n", strerror(errno));
+            SVR4WSRestoreTextMode(pScrn);
+            return FALSE;
+        }
+        if (ioctl(fPtr->kd_fd, KD_GET_CUSTOM_MODE, &fPtr->custom_mode_number) < 0) {
+            xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "KD_GET_CUSTOM_MODE failed: %s\n", strerror(errno));
+            SVR4WSRestoreTextMode(pScrn);
+            return FALSE;
+        }
+    }
+    if (fPtr->custom_mode_number < 0 || fPtr->custom_mode_number > 255) {
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "kernel returned invalid custom mode %d\n", fPtr->custom_mode_number);
+        SVR4WSRestoreTextMode(pScrn);
+        return FALSE;
+    }
+    if (ioctl(fPtr->kd_fd, MODESWITCH | fPtr->custom_mode_number, 0) < 0) {
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "SW_CUSTOM_MODE failed: %s\n", strerror(errno));
+        SVR4WSRestoreTextMode(pScrn);
+        return FALSE;
+    }
+    /* Unlock Cirrus Logic extensions */
+    SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x06, 0x12);
+    /* Enable packed-pixel 256-color mode (SR07 = 0x81) */
+    SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x07, 0x81);
+    /* Configure single bank mode with 16KB granularity */
+    SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x0b, 0x20);
+
     if (ioctl(fPtr->kd_fd, KDSETMODE, KD_GRAPHICS) < 0) {
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "KDSETMODE KD_GRAPHICS failed: %s\n", strerror(errno));
+        SVR4WSRestoreTextMode(pScrn);
         return FALSE;
     }
-    if (!SVR4WSMapDisplay(pScrn))
+    if (!SVR4WSMapDisplay(pScrn)) {
+        SVR4WSRestoreTextMode(pScrn);
         return FALSE;
+    }
     pScrn->vtSema = TRUE;
     return TRUE;
 }
@@ -764,6 +866,7 @@ SVR4WSScreenInit(SCREEN_INIT_ARGS_DECL)
     SVR4WSDebug("svr4ws: ScreenInit\n");
 
     fPtr->shadow_stride = SVR4WS_WIDTH;
+    fPtr->framebuffer_stride = SVR4WS_WIDTH;
     fPtr->shadow_size = (size_t)SVR4WS_HEIGHT * (size_t)fPtr->shadow_stride;
     fPtr->shadow = calloc(1, fPtr->shadow_size);
     if (!fPtr->shadow)
@@ -878,12 +981,15 @@ SVR4WSLoadPalette(ScrnInfoPtr pScrn, int numColors, int *indices, LOCO *colors, 
 
     for (i = 0; i < numColors; ++i) {
         int index;
+        int hw_index;
 
         index = indices[i];
-        if (index < 0 || index >= SVR4WS_HW_COLORS)
+        if (index < 0 || index >= SVR4WS_COLORMAP_ENTRIES)
             continue;
 
-        SVR4WSWritePort8(0x3c8, (unsigned char)index);
+        hw_index = index & (SVR4WS_HW_COLORS - 1);
+
+        SVR4WSWritePort8(0x3c8, (unsigned char)hw_index);
         SVR4WSWritePort8(0x3c9, (unsigned char)(colors[index].red & 0x3f));
         SVR4WSWritePort8(0x3c9, (unsigned char)(colors[index].green & 0x3f));
         SVR4WSWritePort8(0x3c9, (unsigned char)(colors[index].blue & 0x3f));
