@@ -1,0 +1,29 @@
+#! /bin/sh
+
+name=xorg-xcalc
+repology_id=xcalc
+version=1.1.3
+revision=1
+tarball_url="https://xorg.freedesktop.org/archive/individual/app/xcalc-${version}.tar.gz"
+tarball_blake2b="06e19f8de31fef542e8067b8c58171b9a6470fdcc9e43178ee8e1ec9a5f89e72f3e47c65390b6d81d80afa40af22dcce569d16348ecb48a25bc97dcefb330c43"
+hostdeps="gcc pkg-config"
+deps="core-libs libX11 libXaw libXt xorg-proto"
+
+prepare() {
+    autotools_recursive_regen
+}
+
+configure() {
+    autotools_configure \
+        --with-appdefaultdir=/etc/X11/app-defaults
+}
+
+build() {
+    make -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" make install
+
+    post_package_strip
+}
