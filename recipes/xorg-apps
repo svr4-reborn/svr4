@@ -1,0 +1,11 @@
+#! /bin/sh
+
+name=xorg-apps
+version=1.0
+revision=1
+skip_pkg_check=yes
+deps="xterm xorg-xclock xorg-xeyes xorg-xcalc xdemineur"
+
+package() {
+    :
+}
