@@ -3,7 +3,8 @@ JINX ?= $(realpath jinx)
 BUILD_FOLDER ?= $(realpath ../svr4-build)
 SYSROOT = $(BUILD_FOLDER)/sysroot
 HDD_IMAGE = $(BUILD_FOLDER)/hdd.img
-HDD_SIZE ?= 480 # MiB
+HDD_SIZE ?= 4096 # MiB
+DISK_ADDRESSING ?= lba28
 RAM_SIZE ?= 128 # MiB
 SWAP_SIZE ?= 96 # MiB
 QEMU_DEBUG_LOG = $(BUILD_FOLDER)/qemu-debugcon.log
@@ -43,6 +44,7 @@ hdd $(HDD_IMAGE): $(BUILD_FOLDER)/.jinx-parameters $(SYSROOT)/stand/unix $(SYSRO
 		--image $(HDD_IMAGE) \
 		--sysroot $(SYSROOT) \
 		--size $(HDD_SIZE) \
+		--disk-addressing $(DISK_ADDRESSING) \
 		--swap-size $(SWAP_SIZE) \
 
 .PHONY: qemu

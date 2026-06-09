@@ -29,6 +29,8 @@ _fs_ufs = importlib.import_module('host_tools.fs.ufs')
 RawDiskGeometry = _disk_create.RawDiskGeometry
 create_raw_image_skeleton = _disk_create.create_raw_image_skeleton
 ACTIVE_PARTITION_CHAINLOADER_MBR = _disk_create.ACTIVE_PARTITION_CHAINLOADER_MBR
+DISK_ADDRESSING_CHS = _disk_create.DISK_ADDRESSING_CHS
+DISK_ADDRESSING_LBA28 = _disk_create.DISK_ADDRESSING_LBA28
 MAX_CHS_CYLINDERS = _disk_create.MAX_CHS_CYLINDERS
 MAX_KERNEL_CHS_HEADS = _disk_create.MAX_KERNEL_CHS_HEADS
 MAX_CHS_SECTORS_PER_TRACK = _disk_create.MAX_CHS_SECTORS_PER_TRACK
@@ -123,6 +125,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--kernel-conf', help='Path to the generated uts/i386/conf directory (default: infer from --sysroot)')
     parser.add_argument('--heads', default=16, help='Disk geometry heads value (default: 16)')
     parser.add_argument('--sectors', default=63, help='Disk geometry sectors-per-track value (default: 63)')
+    parser.add_argument(
+        '--disk-addressing',
+        choices=[DISK_ADDRESSING_CHS, DISK_ADDRESSING_LBA28],
+        default=DISK_ADDRESSING_CHS,
+        help='Disk addressing mode for validation and MBR CHS fields (default: chs)',
+    )
     parser.add_argument('--stand-start-sector', default=64, help='Absolute disk sector where the stand slice starts (default: 64)')
     parser.add_argument('--root-align-sectors', default=2048, help='Alignment for the root slice start in sectors (default: 2048)')
     parser.add_argument('--allow-missing-boot-files', action='store_true', help='Build the image even if expected /stand boot files are missing')
@@ -143,7 +151,7 @@ def _align_up(value: int, alignment: int) -> int:
     return ((value + alignment - 1) // alignment) * alignment
 
 
-def _build_geometry(size_mb: int, heads: int, sectors_per_track: int) -> RawDiskGeometry:
+def _build_geometry(size_mb: int, heads: int, sectors_per_track: int, disk_addressing: str) -> RawDiskGeometry:
     total_sectors = _align_up((size_mb * 1024 * 1024) // SECTOR_SIZE, heads * sectors_per_track)
     cylinders = total_sectors // (heads * sectors_per_track)
     if heads > MAX_KERNEL_CHS_HEADS:
@@ -153,7 +161,7 @@ def _build_geometry(size_mb: int, heads: int, sectors_per_track: int) -> RawDisk
             f'error: CHS geometry exceeds sector-per-track limit '
             f'({sectors_per_track} > {MAX_CHS_SECTORS_PER_TRACK})'
         )
-    if cylinders > MAX_CHS_CYLINDERS:
+    if disk_addressing == DISK_ADDRESSING_CHS and cylinders > MAX_CHS_CYLINDERS:
         raise SystemExit(
             f'error: requested image size needs {cylinders} cylinders, which exceeds '
             f'the CHS limit of {MAX_CHS_CYLINDERS}; reduce --size or change geometry'
@@ -750,6 +758,18 @@ def _load_kernel_device_assignments(conf_roots: list[Path]) -> dict[str, tuple[i
             assignments['/dev/vidadm'] = (UFS_IFCHR, int(fields[5], 0), 1)
             break
 
+    m320_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/m320')
+    if m320_mdevice_path is not None:
+        for line in m320_mdevice_path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith('*') or stripped.startswith('#'):
+                continue
+            fields = stripped.split()
+            if len(fields) < 6 or fields[0] != 'm320':
+                break
+            assignments['/dev/mouse'] = (UFS_IFCHR, int(fields[5], 0), 0)
+            break
+
     sad_mdevice_path = _find_kernel_conf_file(conf_roots, 'mdevice.d/sad')
     if sad_mdevice_path is not None:
         for line in sad_mdevice_path.read_text().splitlines():
@@ -852,6 +872,7 @@ def _prepare_base_image(
     unix_partition_start: int,
     unix_partition_size: int,
     slices: list[VtocPartition],
+    disk_addressing: str,
 ) -> None:
     image_path.parent.mkdir(parents=True, exist_ok=True)
     if reuse_existing and image_path.exists():
@@ -864,6 +885,7 @@ def _prepare_base_image(
         volume='SVR4',
         slices=slices,
         mbr_boot_code=ACTIVE_PARTITION_CHAINLOADER_MBR,
+        disk_addressing=disk_addressing,
     )
 
 
@@ -896,7 +918,7 @@ def build_image(args: argparse.Namespace) -> None:
             f'{missing}. Found: {found}. Add them or rerun with --allow-missing-boot-files.'
         )
 
-    geometry = _build_geometry(size_mb, heads, sectors_per_track)
+    geometry = _build_geometry(size_mb, heads, sectors_per_track, args.disk_addressing)
     unix_partition_start, unix_partition_size, slices = _build_slice_layout(
         geometry,
         stand_start_sector=stand_start_sector,
@@ -916,6 +938,7 @@ def build_image(args: argparse.Namespace) -> None:
             unix_partition_start=unix_partition_start,
             unix_partition_size=unix_partition_size,
             slices=slices,
+            disk_addressing=args.disk_addressing,
         )
         _write_slice_bytes(temp_image_path, unix_partition_start, hdboot_partition_bootstrap)
 
