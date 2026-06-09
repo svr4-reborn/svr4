@@ -30,8 +30,12 @@ typedef unsigned short ushort;
 #define KDUNMAPDISP (KIOC | 3)
 #define KDGETMODE (KIOC | 9)
 #define KDSETMODE (KIOC | 10)
+#define KDADDIO (KIOC | 11)
+#define KDDELIO (KIOC | 12)
 #define KDQUEMODE (KIOC | 15)
 #define KDDISPINFO (KIOC | 18)
+#define KDENABIO (KIOC | 60)
+#define KDDISABIO (KIOC | 61)
 
 #define MODESWITCH ('x' << 8)
 #define MAPADAPTER ('m' << 8)
@@ -60,12 +64,14 @@ typedef unsigned short ushort;
 #define DM_CG640x350 16
 #define DM_ATT_640 34
 #define DM_VGA320x200 28
+#define DM_VDC800x600E 39
 #define DM_VDC640x400V 40
 
 #define SW_CG320 (MODESWITCH | DM_CG320)
 #define SW_CG640x350 (MODESWITCH | DM_CG640x350)
 #define SW_ATT640 (MODESWITCH | DM_ATT_640)
 #define SW_VGA320x200 (MODESWITCH | DM_VGA320x200)
+#define SW_VDC800x600E (MODESWITCH | DM_VDC800x600E)
 #define SW_VDC640x400V (MODESWITCH | DM_VDC640x400V)
 
 #define XQ_BUTTON 0
@@ -123,8 +129,8 @@ struct xqEventQueue {
 };
 
 enum draw_kind {
-	DRAW_RAW,
 	DRAW_LINEAR8,
+	DRAW_PLANAR4,
 };
 
 struct graphics_mode {
@@ -133,6 +139,8 @@ struct graphics_mode {
 	int map_ioctl;
 	int width;
 	int height;
+	int depth_bits;
+	size_t bank_size;
 	enum draw_kind draw_kind;
 };
 
@@ -151,10 +159,12 @@ struct runtime_state {
 	unsigned char *backbuffer;
 	void *mapping_base;
 	size_t mapping_size;
+	size_t backbuffer_size;
 	size_t framebuffer_size;
 	int framebuffer_stride;
 	int scene_dirty;
 	int queue_enabled;
+	int io_enabled;
 	volatile struct xqEventQueue *queue;
 	int display_mapped;
 	int graphics_active;
@@ -171,8 +181,9 @@ struct runtime_state {
 };
 
 static const struct graphics_mode graphics_modes[] = {
-	{"vga320x200", SW_VGA320x200, MAPVGA, 320, 200, DRAW_LINEAR8},
-	{"vdc640x400v", SW_VDC640x400V, MAPCONS, 640, 400, DRAW_LINEAR8},
+	{"vga320x200", SW_VGA320x200, MAPVGA, 320, 200, 8, 0, DRAW_LINEAR8},
+	{"vdc640x400v", SW_VDC640x400V, MAPCONS, 640, 400, 8, 0, DRAW_LINEAR8},
+	{"vdc800x600e", SW_VDC800x600E, MAPCONS, 800, 600, 4, 64 * 1024U, DRAW_PLANAR4},
 };
 
 static struct runtime_state runtime_state;
@@ -181,6 +192,69 @@ static volatile sig_atomic_t acquire_requested;
 static volatile sig_atomic_t terminate_requested;
 
 static void unmap_display_memory(void);
+
+static const unsigned short vga_io_ports[] = {0x3c4, 0x3c5, 0x3ce, 0x3cf};
+
+static inline void write_port8(unsigned short port, unsigned char value)
+{
+	__asm__ __volatile__("outb %0, %1" : : "a"(value), "Nd"(port));
+}
+
+static int enable_vga_io(void)
+{
+	size_t index;
+
+	if (runtime_state.io_enabled)
+		return 0;
+
+	for (index = 0; index < ARRAY_SIZE(vga_io_ports); ++index) {
+		if (ioctl(runtime_state.kdvm_fd, KDADDIO, (unsigned int)vga_io_ports[index]) < 0)
+			goto fail;
+	}
+
+	if (ioctl(runtime_state.kdvm_fd, KDENABIO, 0) < 0)
+		goto fail;
+
+	runtime_state.io_enabled = 1;
+	return 0;
+
+fail:
+	(void)ioctl(runtime_state.kdvm_fd, KDDISABIO, 0);
+	while (index > 0) {
+		--index;
+		(void)ioctl(runtime_state.kdvm_fd, KDDELIO, (unsigned int)vga_io_ports[index]);
+	}
+	return -1;
+}
+
+static void disable_vga_io(void)
+{
+	size_t index;
+
+	if (!runtime_state.io_enabled)
+		return;
+
+	(void)ioctl(runtime_state.kdvm_fd, KDDISABIO, 0);
+	for (index = ARRAY_SIZE(vga_io_ports); index > 0; --index)
+		(void)ioctl(runtime_state.kdvm_fd, KDDELIO, (unsigned int)vga_io_ports[index - 1]);
+	runtime_state.io_enabled = 0;
+}
+
+static void vga_write_register(unsigned short index_port, unsigned short data_port, unsigned char index, unsigned char value)
+{
+	write_port8(index_port, index);
+	write_port8(data_port, value);
+}
+
+static void set_vga_plane_mask(unsigned char plane_mask)
+{
+	vga_write_register(0x3c4, 0x3c5, 0x02, plane_mask);
+}
+
+static void set_vga_byte_mask(unsigned char byte_mask)
+{
+	vga_write_register(0x3ce, 0x3cf, 0x08, byte_mask);
+}
 
 static void print_usage(const char *program)
 {
@@ -376,10 +450,23 @@ static const struct graphics_mode *choose_default_mode(int adapter_type)
 	case KD_VGA:
 		return find_mode("vga320x200");
 	case KD_VDC600:
-		return find_mode("vdc640x400v");
+		return find_mode("vdc800x600e");
 	default:
 		return NULL;
 	}
+}
+
+static void print_mode_details(int seconds)
+{
+	printf("wsdemo: mode=%s %dx%d %dbpp framebuffer=%lu stride=%d bank=%lu duration=%d seconds\n",
+		runtime_state.mode->name,
+		runtime_state.mode->width,
+		runtime_state.mode->height,
+		runtime_state.mode->depth_bits,
+		(unsigned long)runtime_state.framebuffer_size,
+		runtime_state.framebuffer_stride,
+		(unsigned long)runtime_state.mode->bank_size,
+		seconds);
 }
 
 static void on_release_signal(int signo)
@@ -459,7 +546,7 @@ static int map_display_memory(void)
 {
 	struct kd_dispinfo dispinfo;
 	struct kd_memloc memloc;
-	unsigned char *backbuffer;
+	size_t backbuffer_size;
 	void *mapping_base;
 	size_t mapping_size;
 
@@ -487,23 +574,26 @@ static int map_display_memory(void)
 	runtime_state.mapping_size = mapping_size;
 	runtime_state.framebuffer_size = (size_t)dispinfo.size;
 	runtime_state.display_mapped = 1;
-	runtime_state.framebuffer_stride = runtime_state.mode->width;
-	if (runtime_state.mode->height > 0
-			&& (size_t)runtime_state.framebuffer_stride * (size_t)runtime_state.mode->height > runtime_state.framebuffer_size) {
-		runtime_state.framebuffer_stride = (int)(runtime_state.framebuffer_size / (size_t)runtime_state.mode->height);
-		if (runtime_state.framebuffer_stride <= 0)
-			runtime_state.framebuffer_stride = runtime_state.mode->width;
-	}
+	if (runtime_state.mode->depth_bits == 4)
+		runtime_state.framebuffer_stride = (runtime_state.mode->width + 7) / 8;
+	else
+		runtime_state.framebuffer_stride = runtime_state.mode->width;
 
-	backbuffer = malloc(runtime_state.framebuffer_size);
-	if (!backbuffer) {
+	backbuffer_size = (size_t)runtime_state.mode->width * (size_t)runtime_state.mode->height;
+	if (runtime_state.mode->height > 0 && backbuffer_size / (size_t)runtime_state.mode->height != (size_t)runtime_state.mode->width) {
+		errno = EOVERFLOW;
+		return -1;
+	}
+	runtime_state.backbuffer_size = backbuffer_size;
+
+	runtime_state.backbuffer = malloc(runtime_state.backbuffer_size);
+	if (!runtime_state.backbuffer) {
 		unmap_display_memory();
 		errno = ENOMEM;
 		return -1;
 	}
 
-	memset(backbuffer, 0, runtime_state.framebuffer_size);
-	runtime_state.backbuffer = backbuffer;
+	memset(runtime_state.backbuffer, 0, runtime_state.backbuffer_size);
 
 	return 0;
 }
@@ -521,6 +611,7 @@ static void unmap_display_memory(void)
 	runtime_state.backbuffer = NULL;
 	runtime_state.mapping_base = NULL;
 	runtime_state.mapping_size = 0;
+	runtime_state.backbuffer_size = 0;
 	runtime_state.framebuffer_size = 0;
 	runtime_state.scene_dirty = 0;
 	runtime_state.display_mapped = 0;
@@ -555,15 +646,7 @@ static void disable_queue_mode(void)
 	runtime_state.queue_enabled = 0;
 }
 
-static void draw_raw_pattern(volatile unsigned char *framebuffer, size_t size, unsigned int phase)
-{
-	size_t index;
-
-	for (index = 0; index < size; ++index)
-		framebuffer[index] = (unsigned char)(((index / 64U) ^ (index / 7U) ^ phase) & 0xffU);
-}
-
-static void put_pixel_linear8(int x, int y, unsigned char color)
+static void put_pixel_shadow(int x, int y, unsigned char color)
 {
 	size_t offset;
 
@@ -571,8 +654,8 @@ static void put_pixel_linear8(int x, int y, unsigned char color)
 		return;
 	if (x < 0 || y < 0 || x >= runtime_state.mode->width || y >= runtime_state.mode->height)
 		return;
-	offset = (size_t)y * (size_t)runtime_state.framebuffer_stride + (size_t)x;
-	if (offset >= runtime_state.framebuffer_size)
+	offset = (size_t)y * (size_t)runtime_state.mode->width + (size_t)x;
+	if (offset >= runtime_state.backbuffer_size)
 		return;
 	runtime_state.backbuffer[offset] = color;
 }
@@ -584,7 +667,7 @@ static void fill_rect_linear8(int x, int y, int width, int height, unsigned char
 
 	for (py = 0; py < height; ++py) {
 		for (px = 0; px < width; ++px)
-			put_pixel_linear8(x + px, y + py, color);
+			put_pixel_shadow(x + px, y + py, color);
 	}
 }
 
@@ -604,7 +687,7 @@ static void draw_line_linear8(int x0, int y0, int x1, int y1, unsigned char colo
 	error = dx - dy;
 
 	for (;;) {
-		put_pixel_linear8(x0, y0, color);
+		put_pixel_shadow(x0, y0, color);
 		if (x0 == x1 && y0 == y1)
 			break;
 		error2 = error * 2;
@@ -619,7 +702,7 @@ static void draw_line_linear8(int x0, int y0, int x1, int y1, unsigned char colo
 	}
 }
 
-static void draw_scene_linear8(void)
+static void draw_scene_indexed(unsigned char color_mask)
 {
 	int x;
 	int y;
@@ -631,41 +714,93 @@ static void draw_scene_linear8(void)
 
 	phase = (unsigned char)((runtime_state.motion_events + runtime_state.button_events * 5U + runtime_state.key_events * 11U) & 0xffU);
 	for (y = 0; y < runtime_state.mode->height; ++y) {
-		for (x = 0; x < runtime_state.framebuffer_stride; ++x) {
+		for (x = 0; x < runtime_state.mode->width; ++x) {
 			size_t offset;
 			unsigned char color;
 
-			offset = (size_t)y * (size_t)runtime_state.framebuffer_stride + (size_t)x;
-			if (offset >= runtime_state.framebuffer_size)
+			offset = (size_t)y * (size_t)runtime_state.mode->width + (size_t)x;
+			if (offset >= runtime_state.backbuffer_size)
 				break;
-			color = (unsigned char)(((x >> 2) + (y >> 1) + phase) & 0xffU);
+			color = (unsigned char)(((x >> 2) + (y >> 1) + phase) & color_mask);
 			if (!(x % 32) || !(y % 24))
-				color = (unsigned char)(phase ^ 0x20U);
+				color = (unsigned char)((phase ^ 0x20U) & color_mask);
 			runtime_state.backbuffer[offset] = color;
 		}
 	}
 
-	fill_rect_linear8(8, 8, runtime_state.mode->width - 16, 12, 0x1f);
-	fill_rect_linear8(8, runtime_state.mode->height - 20, runtime_state.mode->width - 16, 12, 0x08);
-	draw_line_linear8(0, 0, runtime_state.mode->width - 1, runtime_state.mode->height - 1, 0xff);
-	draw_line_linear8(0, runtime_state.mode->height - 1, runtime_state.mode->width - 1, 0, 0xe0);
+	fill_rect_linear8(8, 8, runtime_state.mode->width - 16, 12, (unsigned char)(0x1f & color_mask));
+	fill_rect_linear8(8, runtime_state.mode->height - 20, runtime_state.mode->width - 16, 12, (unsigned char)(0x08 & color_mask));
+	draw_line_linear8(0, 0, runtime_state.mode->width - 1, runtime_state.mode->height - 1, (unsigned char)(0xff & color_mask));
+	draw_line_linear8(0, runtime_state.mode->height - 1, runtime_state.mode->width - 1, 0, (unsigned char)(0xe0 & color_mask));
 
 	bar_width = runtime_state.mode->width - 20;
 	if (bar_width < 1)
 		bar_width = 1;
 	fill_rect_linear8(10, runtime_state.mode->height - 18,
-		(int)(runtime_state.motion_events % (unsigned int)bar_width), 3, 0x40);
+		(int)(runtime_state.motion_events % (unsigned int)bar_width), 3, (unsigned char)(0x40 & color_mask));
 	fill_rect_linear8(10, runtime_state.mode->height - 13,
-		(int)(runtime_state.button_events % (unsigned int)bar_width), 3, 0xa0);
+		(int)(runtime_state.button_events % (unsigned int)bar_width), 3, (unsigned char)(0xa0 & color_mask));
 	fill_rect_linear8(10, runtime_state.mode->height - 8,
-		(int)(runtime_state.key_events % (unsigned int)bar_width), 3, 0xf0);
+		(int)(runtime_state.key_events % (unsigned int)bar_width), 3, (unsigned char)(0xf0 & color_mask));
 
 	fill_rect_linear8(runtime_state.cursor_x - 3, runtime_state.cursor_y - 3, 7, 7,
-		(runtime_state.button_state & 0x01U) ? 0x1c : 0xfc);
+		(unsigned char)(((runtime_state.button_state & 0x01U) ? 0x1c : 0xfc) & color_mask));
 	draw_line_linear8(runtime_state.cursor_x - 10, runtime_state.cursor_y,
-		runtime_state.cursor_x + 10, runtime_state.cursor_y, 0xff);
+		runtime_state.cursor_x + 10, runtime_state.cursor_y, (unsigned char)(0xff & color_mask));
 	draw_line_linear8(runtime_state.cursor_x, runtime_state.cursor_y - 10,
-		runtime_state.cursor_x, runtime_state.cursor_y + 10, 0xff);
+		runtime_state.cursor_x, runtime_state.cursor_y + 10, (unsigned char)(0xff & color_mask));
+}
+
+static void blit_planar4_scene(void)
+{
+	volatile unsigned char *framebuffer;
+	size_t row_bytes;
+	size_t plane;
+	size_t y;
+	size_t xbyte;
+	size_t width;
+	size_t height;
+	size_t framebuffer_stride;
+
+	if (!runtime_state.backbuffer || !runtime_state.framebuffer)
+		return;
+
+	framebuffer = runtime_state.framebuffer;
+	width = (size_t)runtime_state.mode->width;
+	height = (size_t)runtime_state.mode->height;
+	framebuffer_stride = (size_t)runtime_state.framebuffer_stride;
+	row_bytes = (width + 7U) / 8U;
+
+	set_vga_byte_mask(0xff);
+	for (plane = 0; plane < 4; ++plane) {
+		set_vga_plane_mask((unsigned char)(1U << plane));
+		for (y = 0; y < height; ++y) {
+			const unsigned char *source_row;
+			volatile unsigned char *destination_row;
+
+			source_row = runtime_state.backbuffer + (y * width);
+			destination_row = framebuffer + (y * framebuffer_stride);
+			for (xbyte = 0; xbyte < row_bytes; ++xbyte) {
+				unsigned char value;
+				size_t bit;
+
+				value = 0;
+				for (bit = 0; bit < 8; ++bit) {
+					size_t pixel_x;
+					unsigned char color;
+
+					pixel_x = (xbyte * 8U) + bit;
+					if (pixel_x >= width)
+						break;
+					color = source_row[pixel_x];
+					if (color & (1U << plane))
+						value |= (unsigned char)(1U << (7U - bit));
+				}
+				destination_row[xbyte] = value;
+			}
+		}
+	}
+	set_vga_plane_mask(0x0f);
 }
 
 static void redraw_scene(void)
@@ -676,11 +811,12 @@ static void redraw_scene(void)
 		return;
 
 	if (runtime_state.mode->draw_kind == DRAW_LINEAR8) {
-		draw_scene_linear8();
-		memcpy((void *)runtime_state.framebuffer, runtime_state.backbuffer, runtime_state.framebuffer_size);
-	} else {
-		draw_raw_pattern(runtime_state.framebuffer, runtime_state.framebuffer_size,
-			(runtime_state.motion_events + runtime_state.button_events + runtime_state.key_events) & 0xffU);
+		draw_scene_indexed(0xff);
+		memcpy((void *)runtime_state.framebuffer, runtime_state.backbuffer,
+			runtime_state.backbuffer_size < runtime_state.framebuffer_size ? runtime_state.backbuffer_size : runtime_state.framebuffer_size);
+	} else if (runtime_state.mode->draw_kind == DRAW_PLANAR4) {
+		draw_scene_indexed(0x0f);
+		blit_planar4_scene();
 	}
 
 	runtime_state.scene_dirty = 0;
@@ -698,7 +834,15 @@ static int enter_graphics_mode(void)
 			runtime_state.original_text_graphics_mode);
 		return -1;
 	}
+	if (runtime_state.mode->draw_kind == DRAW_PLANAR4 && enable_vga_io() < 0) {
+		unmap_display_memory();
+		(void)restore_display_mode(runtime_state.kdvm_fd,
+			runtime_state.original_console_mode,
+			runtime_state.original_text_graphics_mode);
+		return -1;
+	}
 	if (enable_queue_mode() < 0) {
+		disable_vga_io();
 		unmap_display_memory();
 		(void)restore_display_mode(runtime_state.kdvm_fd,
 			runtime_state.original_console_mode,
@@ -717,6 +861,7 @@ static int enter_graphics_mode(void)
 static void leave_graphics_mode(void)
 {
 	disable_queue_mode();
+	disable_vga_io();
 	unmap_display_memory();
 	if (runtime_state.graphics_active) {
 		(void)restore_display_mode(runtime_state.kdvm_fd,
@@ -862,7 +1007,7 @@ int main(int argc, char **argv)
 	}
 
 	if (!runtime_state.mode) {
-		fprintf(stderr, "wsdemo: no supported linear graphics mode was found; this demo currently handles only vga320x200 and vdc640x400v\n");
+		fprintf(stderr, "wsdemo: no supported graphics mode was found; this demo currently handles vga320x200, vdc640x400v, and vdc800x600e\n");
 		cleanup_runtime();
 		return 1;
 	}
@@ -879,15 +1024,15 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	printf("wsdemo: mode=%s duration=%d seconds\n", runtime_state.mode->name, options.seconds);
-	printf("wsdemo: move the mouse or press keys; press Esc or q to exit early\n");
-	fflush(stdout);
-
 	if (enter_graphics_mode() < 0) {
 		fprintf(stderr, "wsdemo: unable to enter graphics mode: %s\n", strerror(errno));
 		cleanup_runtime();
 		return 1;
 	}
+
+	print_mode_details(options.seconds);
+	printf("wsdemo: move the mouse or press keys; press Esc or q to exit early\n");
+	fflush(stdout);
 
 	deadline = time(NULL) + options.seconds;
 	while (!terminate_requested) {
