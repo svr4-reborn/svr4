@@ -2,9 +2,9 @@
 
 name=xorg-drivers
 version=21.1
-revision=3
+revision=4
 skip_pkg_check=yes
-deps="xf86-video-dummy xf86-video-svr4ws"
+deps="xf86-video-dummy xf86-video-svr4ws xf86-input-svr4xqueue"
 
 package() {
     :
