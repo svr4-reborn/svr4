@@ -1,0 +1,228 @@
+diff --git xdemineur-clean/demineur.c xdemineur-workdir/demineur.c
+index 9fdb72f..51c2af0 100644
+--- xdemineur-clean/demineur.c
++++ xdemineur-workdir/demineur.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby
+@@ -12,7 +12,7 @@
+  *
+  */
+ 
+-static char *const cvsid = "$Id: demineur.c,v 1.2.2.1 1999/07/29 21:25:30 babafou Exp $" ;
++static char *const cvsid __attribute__((unused)) = "$Id: demineur.c,v 1.2.2.1 1999/07/29 21:25:30 babafou Exp $" ;
+ 
+ #include <sys/types.h>
+ 
+diff --git xdemineur-clean/demineur.h xdemineur-workdir/demineur.h
+index e8da620..55c1cd4 100644
+--- xdemineur-clean/demineur.h
++++ xdemineur-workdir/demineur.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby
+diff --git xdemineur-clean/main.c xdemineur-workdir/main.c
+index ec0a710..3b14b60 100644
+--- xdemineur-clean/main.c
++++ xdemineur-workdir/main.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby
+@@ -12,13 +12,14 @@
+  *
+  */
+ 
+-static char *const cvsid = "$Id: main.c,v 1.3.2.2 1999/08/01 20:57:46 babafou Exp $" ;
++static char *const cvsid __attribute__((unused)) = "$Id: main.c,v 1.3.2.2 1999/08/01 20:57:46 babafou Exp $" ;
+ 
+ #include <sys/types.h>
+ 
+ #include <signal.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <sysexits.h>
+ #include <time.h>
+ 
+@@ -48,10 +49,10 @@ int main ( int argc , char **argv )
+    {
+       if ( strcmp ( argv[i] , "-v" ) == 0 )
+       {
+-         unsigned char *message = "\
+-xdémineur 2.1.1\n\
++         const char *message = "\
++xdÃ©mineur 2.1.1\n\
+ \n\
+-Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>\n\
++Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>\n\
+ \n\
+ Permission to use, copy, modify, and distribute this software and\n\
+ its documentation for any purpose and without fee is hereby\n\
+@@ -140,5 +141,6 @@ warranty.\n" ;
+ 
+ void sigalrm ( int sig )
+ {
++   (void)sig;
+    elapsed ++ ;
+ }
+diff --git xdemineur-workdir/meson.build xdemineur-workdir/meson.build
+new file mode 100644
+index 0000000..9fbd31e
+--- /dev/null
++++ xdemineur-workdir/meson.build
+@@ -0,0 +1,36 @@
++project('xdemineur', 'c',
++  version: '2.1.1',
++  default_options: [
++    'warning_level=2',
++    'c_std=gnu99',
++  ]
++)
++
++cc = meson.get_compiler('c')
++
++x11_dep = dependency('x11')
++xpm_dep = dependency('xpm')
++
++sources = [
++  'demineur.c',
++  'main.c',
++  'util.c',
++  'xdemineur.c',
++]
++
++executable('xdemineur',
++  sources,
++  dependencies: [
++    x11_dep,
++    xpm_dep,
++  ],
++  install: true
++)
++
++xdemineur_man = configure_file(
++  input: 'xdemineur.man',
++  output: 'xdemineur.6',
++  copy: true
++)
++
++install_man(xdemineur_man)
+diff --git xdemineur-clean/util.c xdemineur-workdir/util.c
+index c062820..ce48e8b 100644
+--- xdemineur-clean/util.c
++++ xdemineur-workdir/util.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby
+@@ -12,7 +12,7 @@
+  *
+  */
+ 
+-static char *const cvsid = "$Id: util.c,v 1.1.1.1.2.1 1999/07/29 21:25:32 babafou Exp $" ;
++static char *const cvsid __attribute__((unused)) = "$Id: util.c,v 1.1.1.1.2.1 1999/07/29 21:25:32 babafou Exp $" ;
+ 
+ #include <sys/types.h>
+ 
+diff --git xdemineur-clean/util.h xdemineur-workdir/util.h
+index c84fb84..0ed70dd 100644
+--- xdemineur-clean/util.h
++++ xdemineur-workdir/util.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby
+diff --git xdemineur-clean/xdemineur.c xdemineur-workdir/xdemineur.c
+index e673a65..8a57763 100644
+--- xdemineur-clean/xdemineur.c
++++ xdemineur-workdir/xdemineur.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby
+@@ -12,7 +12,7 @@
+  *
+  */
+ 
+-static char *const cvsid = "$Id: xdemineur.c,v 1.3.2.2 1999/07/29 21:25:33 babafou Exp $" ;
++static char *const cvsid __attribute__((unused)) = "$Id: xdemineur.c,v 1.3.2.2 1999/07/29 21:25:33 babafou Exp $" ;
+ 
+ #include <sys/types.h>
+ 
+@@ -165,7 +165,7 @@ void xdemineur_initialize ( int argc , char **argv ,
+    XSizeHints      size_hints ;
+    int             x_pos = 0 , y_pos = 0 ,
+                    width = MIN_WIDTH , height = MIN_HEIGHT ;
+-   char            *window_title = "xdémineur" , *icon_title = "xdémineur" ;
++   char            *window_title = "xdÃ©mineur" , *icon_title = "xdÃ©mineur" ;
+    XTextProperty   window_name , icon_name ;
+    XWMHints        wm_hints ;
+    XClassHint      class_hints ;
+@@ -270,7 +270,7 @@ void xdemineur_initialize ( int argc , char **argv ,
+ 
+    icon_bitmap = XCreateBitmapFromData ( display ,
+                                          RootWindow ( display , screen ) ,
+-                                         xdemineur_bits ,
++                                         (char *)xdemineur_bits ,
+                                          xdemineur_width , xdemineur_height ) ;
+ 
+    wm_hints.flags         = InputHint | StateHint | IconPixmapHint | WindowGroupHint;
+@@ -280,7 +280,7 @@ void xdemineur_initialize ( int argc , char **argv ,
+    wm_hints.window_group  = window ;
+ 
+    class_hints.res_name  = argv[0] ;
+-   class_hints.res_class = "XDémineur" ;
++   class_hints.res_class = "XDÃ©mineur" ;
+ 
+    XSetWMProperties ( display , window ,
+                       &window_name , &icon_name ,
+@@ -402,7 +402,7 @@ void xdemineur_event_loop ( )
+    Region       region ;
+    XRectangle   rectangle ;
+    item_t       item ;
+-   previous_t   previous ;
++   previous_t   previous = { 0 , 0 , STATE_NONE } ;
+ 
+    FD_ZERO ( &readfds ) ;
+    region = XCreateRegion ( ) ;
+@@ -604,7 +604,7 @@ void xdemineur_event_loop ( )
+          }
+          break ;
+       case ClientMessage :
+-         if ( event.xclient.data.l[0] == protocol[0] )
++         if ( (Atom)event.xclient.data.l[0] == protocol[0] )
+          {
+             XDestroyRegion ( region ) ;
+             xdemineur_end ( ) ;
+diff --git xdemineur-clean/xdemineur.h xdemineur-workdir/xdemineur.h
+index bb98014..3ed3145 100644
+--- xdemineur-clean/xdemineur.h
++++ xdemineur-workdir/xdemineur.h
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
++ * Copyright Â© 1993-1999 Marc Baudoin <babafou@babafou.eu.org>
+  *
+  * Permission to use, copy, modify, and distribute this software and
+  * its documentation for any purpose and without fee is hereby

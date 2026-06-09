@@ -1,0 +1,13 @@
+#! /bin/sh
+
+name=xdemineur
+repology_id=xdemineur
+version=2.1.1
+revision=1
+tarball_url="http://www.babafou.eu.org/xdemineur/xdemineur-${version}.tar.gz"
+tarball_blake2b="d28b7931a092b8759efbf7bcf21f56f137d62acf0fbe93dd109d7b6a17006d5d28974ba375550155680c4e350d1700a0bf66f9a83608051f678eeac35f4ed7de"
+imagedeps="meson ninja-build"
+hostdeps="gcc pkg-config"
+deps="core-libs libX11 libXpm"
+
+meson_recipe
