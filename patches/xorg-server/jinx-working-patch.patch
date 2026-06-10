@@ -1,0 +1,169 @@
+diff --git xorg-server-clean/dix/dispatch.c xorg-server-workdir/dix/dispatch.c
+index 4c6bd1b6e..b7f7d9c8a 100644
+--- xorg-server-clean/dix/dispatch.c
++++ xorg-server-workdir/dix/dispatch.c
+@@ -520,6 +520,11 @@ Dispatch(void)
+                 if (result == 0)
+                     break;
+                 else if (result == -1) {
++                    ErrorF("xorg-svr4: Dispatch closing client=%d after ReadRequestFromClient=-1 state=%d gone=%d noexc=%d\n",
++                           client ? client->index : -1,
++                           client ? client->clientState : -1,
++                           client ? client->clientGone : -1,
++                           client ? client->noClientException : -1);
+                     CloseDownClient(client);
+                     break;
+                 }
+@@ -564,6 +569,12 @@ Dispatch(void)
+ #endif
+ 
+                 if (client->noClientException != Success) {
++                    ErrorF("xorg-svr4: Dispatch closing client=%d due noClientException=%d major=%u minor=%u result=%d\n",
++                           client ? client->index : -1,
++                           client ? client->noClientException : -1,
++                           client ? client->majorOp : 0,
++                           client ? client->minorOp : 0,
++                           result);
+                     CloseDownClient(client);
+                     break;
+                 }
+diff --git xorg-server-clean/os/connection.c xorg-server-workdir/os/connection.c
+index 35e2a4d45..c4a7a4c12 100644
+--- xorg-server-clean/os/connection.c
++++ xorg-server-workdir/os/connection.c
+@@ -598,13 +598,25 @@ ClientReady(int fd, int xevents, void *data)
+ {
+     ClientPtr client = data;
+ 
++    ErrorF("xorg-svr4: ClientReady fd=%d xevents=0x%x client=%d state=%d gone=%d noexc=%d\n",
++           fd, xevents, client ? client->index : -1,
++           client ? client->clientState : -1,
++           client ? client->clientGone : -1,
++           client ? client->noClientException : -1);
++
+     if (xevents & X_NOTIFY_ERROR) {
++        ErrorF("xorg-svr4: ClientReady closing fd=%d on notify error\n", fd);
+         CloseDownClient(client);
+         return;
+     }
+-    if (xevents & X_NOTIFY_READ)
++    if (xevents & X_NOTIFY_READ) {
++        ErrorF("xorg-svr4: ClientReady mark ready fd=%d client=%d\n",
++               fd, client ? client->index : -1);
+         mark_client_ready(client);
++    }
+     if (xevents & X_NOTIFY_WRITE) {
++        ErrorF("xorg-svr4: ClientReady write-ready fd=%d client=%d\n",
++               fd, client ? client->index : -1);
+         ospoll_mute(server_poll, fd, X_NOTIFY_WRITE);
+         NewOutputPending = TRUE;
+     }
+ }
+ 
+ static ClientPtr
+@@ -630,11 +642,13 @@ AllocNewConnection(XtransConnInfo trans_conn, int fd, CARD32 conn_time)
+     }
+     client->local = ComputeLocalClient(client);
+     ospoll_add(server_poll, fd,
+-               ospoll_trigger_edge,
++               ospoll_trigger_level,
+                ClientReady,
+                client);
++    ErrorF("xorg-svr4: AllocNewConnection client=%d fd=%d local=%d trigger=level\n",
++           client->index, fd, client->local);
+     set_poll_client(client);
+ 
+ #ifdef DEBUG
+     ErrorF("AllocNewConnection: client index = %d, socket fd = %d, local = %d\n",
+            client->index, fd, client->local);
+ #endif
+ #ifdef XSERVER_DTRACE
+     XSERVER_CLIENT_CONNECT(client->index, fd);
+ #endif
+@@ -757,26 +771,34 @@ CloseDownFileDescriptor(OsCommPtr oc)
+ {
+     if (oc->trans_conn) {
+         int connection = oc->fd;
++        ErrorF("xorg-svr4: CloseDownFileDescriptor fd=%d\n", connection);
+ #ifdef XDMCP
+         XdmcpCloseDisplay(connection);
+ #endif
+         ospoll_remove(server_poll, connection);
+         _XSERVTransDisconnect(oc->trans_conn);
+         _XSERVTransClose(oc->trans_conn);
+         oc->trans_conn = NULL;
+         oc->fd = -1;
+     }
+ }
+ 
+ /*****************
+  * CloseDownConnection
+  *    Delete client from AllClients and free resources
+  *****************/
+ 
+ void
+ CloseDownConnection(ClientPtr client)
+ {
+     OsCommPtr oc = (OsCommPtr) client->osPrivate;
++
++    ErrorF("xorg-svr4: CloseDownConnection client=%d state=%d gone=%d noexc=%d fd=%d\n",
++           client ? client->index : -1,
++           client ? client->clientState : -1,
++           client ? client->clientGone : -1,
++           client ? client->noClientException : -1,
++           oc ? oc->fd : -1);
+ 
+     if (FlushCallback)
+         CallCallbacks(&FlushCallback, client);
+diff --git xorg-server-clean/os/io.c xorg-server-workdir/os/io.c
+index 83986af92..9f9d5d3ac 100644
+--- xorg-server-clean/os/io.c
++++ xorg-server-workdir/os/io.c
+@@ -187,8 +187,17 @@ YieldControlNoInput(ClientPtr client)
+ {
+     OsCommPtr oc = client->osPrivate;
+     YieldControl();
+-    if (oc->trans_conn)
++    if (oc->trans_conn) {
++        ErrorF("xorg-svr4: YieldControlNoInput reset fd=%d client=%d state=%d gone=%d noexc=%d\n",
++               oc->fd, client ? client->index : -1,
++               client ? client->clientState : -1,
++               client ? client->clientGone : -1,
++               client ? client->noClientException : -1);
+         ospoll_reset_events(server_poll, oc->fd);
++    } else {
++        ErrorF("xorg-svr4: YieldControlNoInput no trans_conn client=%d\n",
++               client ? client->index : -1);
++    }
+ }
+ 
+ static void
+@@ -356,18 +365,21 @@ ReadRequestFromClient(ClientPtr client)
+         result = _XSERVTransRead(oc->trans_conn, oci->buffer + oci->bufcnt,
+                                  oci->size - oci->bufcnt);
+         if (result <= 0) {
++            ErrorF("xorg-svr4: ReadRequestFromClient fd=%d client=%d state=%d result=%d errno=%d gotnow=%u needed=%u\n",
++                   oc->fd, client ? client->index : -1,
++                   client ? client->clientState : -1,
++                   result, errno, gotnow, needed);
+             if ((result < 0) && ETEST(errno)) {
++                ErrorF("xorg-svr4: ReadRequestFromClient EAGAIN/no-input fd=%d client=%d\n",
++                       oc->fd, client ? client->index : -1);
+                 mark_client_not_ready(client);
+-#if defined(SVR4) && defined(__i386__) && !defined(__sun)
+-                if (0)
+-#endif
+-                {
+-                    YieldControlNoInput(client);
+-                    return 0;
+-                }
++                YieldControlNoInput(client);
++                return 0;
+             }
++            ErrorF("xorg-svr4: ReadRequestFromClient death fd=%d client=%d result=%d errno=%d\n",
++                   oc->fd, client ? client->index : -1, result, errno);
+             YieldControlDeath();
+             return -1;
+            }
+            oci->bufcnt += result;
+            gotnow += result;

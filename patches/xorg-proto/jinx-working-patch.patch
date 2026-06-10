@@ -2,6 +2,15 @@ diff --git xorg-proto-clean/include/X11/Xfuncs.h xorg-proto-workdir/include/X11/
 index b23c283..6e89e9e 100644
 --- xorg-proto-clean/include/X11/Xfuncs.h
 +++ xorg-proto-workdir/include/X11/Xfuncs.h
+@@ -37,7 +37,7 @@
+ void bzero();
+ int bcmp();
+ #  else
+-#   if defined(SYSV) && !defined(__SCO__) && !defined(__sun) && !defined(__UNIXWARE__) && !defined(_AIX)
++#   if defined(SYSV) && !defined(__SCO__) && !defined(__sun) && !defined(__UNIXWARE__) && !defined(_AIX) && !defined(__svr4_reborn__)
+ #    include <memory.h>
+ void bcopy();
+ #    define bzero(b,len) memset(b, 0, len)
 @@ -44,7 +44,7 @@ void bcopy();
  #    define bcmp(b1,b2,len) memcmp(b1, b2, len)
  #   else
@@ -11,6 +20,19 @@ index b23c283..6e89e9e 100644
  #     include <strings.h>
  #    endif
  #    define _XFUNCS_H_INCLUDED_STRING_H
+diff --git xorg-proto-clean/include/X11/Xosdefs.h xorg-proto-workdir/include/X11/Xosdefs.h
+index ebc993c..59e2118 100644
+--- xorg-proto-clean/include/X11/Xosdefs.h
++++ xorg-proto-workdir/include/X11/Xosdefs.h
+@@ -43,7 +43,7 @@
+ # ifdef __i386__
+ #  ifdef SYSV
+ #   if !defined(__SCO__) && \
+-	!defined(__UNIXWARE__) && !defined(__sun)
++	!defined(__UNIXWARE__) && !defined(__sun) && !defined(__svr4_reborn__)
+ #    if !defined(_POSIX_SOURCE)
+ #     define X_NOT_POSIX
+ #    endif
 diff --git xorg-proto-clean/include/X11/Xos.h xorg-proto-workdir/include/X11/Xos.h
 index 9b34a09..38937f3 100644
 --- xorg-proto-clean/include/X11/Xos.h
