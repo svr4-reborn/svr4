@@ -42,10 +42,9 @@ Scope:
 
 Tooling:
 
-- Use the pilot rewriter at `uts/tools/ansi_c_rewrite.py`.
-- Use the checked-in workflow helper at `uts/tools/legacy_c_pipeline.py` for repeatable single-file experiments.
-- Use checked-in Coccinelle patches under `uts/tools/cocci/` for narrow structural rewrites after normalization.
-- Run it slice-by-slice, writing to a temporary file first.
+- Convert K&R definition heads by hand, slice by slice, writing to a temporary file first.
+- Use checked-in Coccinelle patches under `uts/tools/cocci/` (run with `spatch`) for narrow structural rewrites after normalization.
+- Keep each slice's conversion in its own commit so the review surface stays readable.
 
 Gate for each touched file:
 
@@ -54,40 +53,24 @@ Gate for each touched file:
 - `-Wdeprecated-non-prototype` drops for the touched translation unit.
 - Any new parse failure blocks the batch.
 
-Recommended pilot command for the `uts/i386/os` slice:
+Recommended syntax-check command for the `uts/i386/os` slice:
 
 ```bash
-python uts/tools/ansi_c_rewrite.py uts/i386/os/scalls.c --output /tmp/scalls.ansi.c
 cd uts/i386/os
 clang -std=gnu89 -fcommon -fno-builtin -O2 -m32 -I.. -D_KERNEL -DAT386 -DWEITEK \
-  -Wold-style-definition -Wstrict-prototypes -Wimplicit-int -fsyntax-only /tmp/scalls.ansi.c
+  -Wold-style-definition -Wstrict-prototypes -Wimplicit-int -fsyntax-only scalls.c
 ```
 
-Equivalent staged helper workflow:
+Optional semantic patch step (Coccinelle, applied in place):
 
 ```bash
-python uts/tools/legacy_c_pipeline.py uts/i386/os/scalls.c --output /tmp/scalls.pipeline.c
-```
-
-Optional semantic patch step:
-
-```bash
-python uts/tools/legacy_c_pipeline.py uts/i386/os/scalls.c \
-  --cocci uts/tools/cocci/assignment_in_if.cocci \
-  --output /tmp/scalls.pipeline.c
+spatch --sp-file uts/tools/cocci/assignment_in_if.cocci --in-place uts/i386/os/scalls.c
 ```
 
 Notes:
 
-- `legacy_c_pipeline.py` does not depend on `compile_commands.json`.
-- By default, its `clang -fsyntax-only` and `clang-tidy` stages are report-only so the workflow can finish even when legacy code still has real diagnostics.
-- Use `--strict-syntax` and `--strict-tidy` when a slice is ready to become a gating step.
-
-Pilot result on `scalls.c`:
-
-- `-Wdeprecated-non-prototype`: `61` down to `23`
-- `-Wimplicit-int`: `6` down to `1`
-- Remaining warnings are mostly header non-prototype declarations plus pre-existing semantic issues.
+- None of these steps depend on `compile_commands.json`.
+- The `clang -fsyntax-only` gate is report-only on legacy code that still has real diagnostics; treat it as gating only once a slice is clean.
 
 ### Phase 2: Header prototype pass
 
@@ -170,6 +153,6 @@ Its intent is conservative:
 
 ## Near-Term Follow-Up
 
-- Extend `uts/tools/ansi_c_rewrite.py` only for clearly mechanical cases.
+- Add narrow Coccinelle patches under `uts/tools/cocci/` only for clearly mechanical cases.
 - Add slice-specific validation command helpers if repeated manual invocation becomes noisy.
 - Keep semantic fixes and formatting in separate commits from large K&R conversion batches.
