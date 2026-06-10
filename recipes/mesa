@@ -1,0 +1,32 @@
+#!/bin/sh
+
+name=mesa
+version=26.1.2
+revision=1
+tarball_url="https://archive.mesa3d.org/mesa-${version}.tar.xz"
+tarball_blake2b="d78778c2905db11f95d09a0b29eb35fe0fe4eb83cf64746d423b28047720c11f9bae9cdac50dea5c3b22889a7bda137a6a44e2a9db6c71621266ee6929210ab9"
+imagedeps="python3-mako python3-yaml glslang-tools"
+hostdeps="gcc pkg-config"
+deps="core-libs libexpat libX11 libxcb libXext libXshmfence libXxf86vm libXrandr zlib zstd"
+
+configure() {
+    meson_configure \
+        -Dglx=xlib \
+        -Dplatforms=x11 \
+        -Dgallium-drivers=softpipe \
+        -Dvulkan-drivers="" \
+        -Dvideo-codecs=all_free \
+        -Dllvm=disabled \
+        -Dsse2=false
+}
+
+build() {
+    meson compile -j${parallelism}
+}
+
+package() {
+    DESTDIR="${dest_dir}" meson install --no-rebuild
+
+    post_package_strip
+}
+
