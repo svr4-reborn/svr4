@@ -5,8 +5,8 @@ SYSROOT = $(BUILD_FOLDER)/sysroot
 HDD_IMAGE = $(BUILD_FOLDER)/hdd.img
 HDD_SIZE ?= 4096 # MiB
 DISK_ADDRESSING ?= lba28
-RAM_SIZE ?= 128 # MiB
-SWAP_SIZE ?= 96 # MiB
+RAM_SIZE ?= 1024 # MiB
+SWAP_SIZE ?= 128 # MiB
 QEMU_DEBUG_LOG = $(BUILD_FOLDER)/qemu-debugcon.log
 PYTHON ?= .venv/bin/python
 
@@ -24,7 +24,7 @@ build-mlibc $(SYSROOT)/usr/lib/libc.so: $(BUILD_FOLDER)/.jinx-parameters
 	@cd $(BUILD_FOLDER) && $(JINX) build mlibc
 	@cd $(BUILD_FOLDER) && $(JINX) install -f $(SYSROOT) mlibc
 
-BASE_PKGS=base-files svr4_init svr4_iputils bash coreutils wsdiag wsdemo xorg-server xorg-drivers xorg-xclock xorg-twm xterm
+BASE_PKGS=base-files svr4_init svr4_iputils bash coreutils wsdiag wsdemo xorg-server xorg-twm xorg-drivers xorg-apps
 THREADTEST_PKGS=svr4_threadtests
 .PHONY: ensure-installed
 ensure-installed:
@@ -48,10 +48,13 @@ hdd $(HDD_IMAGE): $(BUILD_FOLDER)/.jinx-parameters $(SYSROOT)/stand/unix $(SYSRO
 		--swap-size $(SWAP_SIZE) \
 
 .PHONY: qemu
-qemu: $(HDD_IMAGE)
-	qemu-system-i386 -drive format=raw,file=$(HDD_IMAGE) -net none -boot c -m $(RAM_SIZE) -debugcon stdio -vga cirrus
+qemu: $(HDD_IMAGE) qemu-no-rebuild
+
+.PHONY: qemu-no-rebuild
+qemu-no-rebuild:
+	qemu-system-i386 -machine pc,vmport=off -drive format=raw,file=$(HDD_IMAGE) -net none -boot c -m $(RAM_SIZE) -debugcon stdio -vga cirrus -display gtk,grab-on-hover=on
 
 .PHONY: qemu-curses
 qemu-curses: $(HDD_IMAGE)
 	@echo "QEMU debug console output: $(QEMU_DEBUG_LOG)"
-	qemu-system-i386 -drive format=raw,file=$(HDD_IMAGE) -net none -boot c -m $(RAM_SIZE) -display curses -debugcon file:$(QEMU_DEBUG_LOG)
+	qemu-system-i386 -machine pc,vmport=off -drive format=raw,file=$(HDD_IMAGE) -net none -boot c -m $(RAM_SIZE) -display curses -debugcon file:$(QEMU_DEBUG_LOG)
