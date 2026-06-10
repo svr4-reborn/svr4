@@ -3,5 +3,5 @@
 name=mlibc
 version=6.3.0
 git_url="https://github.com/svr4-reborn/mlibc.git"
-commit="84a2370ab3ebaf67c2ad890896f58304c99c3005"
+commit="4c498e078152143919f4aa1bb0aea90bad2f1ed1"
 shallow=no
