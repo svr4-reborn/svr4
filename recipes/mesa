@@ -17,7 +17,8 @@ configure() {
         -Dvulkan-drivers="" \
         -Dvideo-codecs=all_free \
         -Dllvm=disabled \
-        -Dsse2=false
+        -Dsse2=false \
+        -Dsse41=false
 }
 
 build() {

@@ -1,5 +1,5 @@
 diff --git mesa-clean/meson.build mesa-workdir/meson.build
-index 392f147..fc3b38b 100644
+index 392f147..b7ac7d8 100644
 --- mesa-clean/meson.build
 +++ mesa-workdir/meson.build
 @@ -1190,7 +1190,7 @@ if cc.has_function('fmemopen')
@@ -11,6 +11,33 @@ index 392f147..fc3b38b 100644
    pre_args += '-D_GNU_SOURCE'
  elif host_machine.system() == 'sunos'
    pre_args += '-D__EXTENSIONS__'
+@@ -1399,7 +1399,7 @@ sse2_arg = []
+ sse2_args = []
+ sse41_args = []
+ with_sse41 = false
+-if host_machine.cpu_family().startswith('x86')
++if host_machine.cpu_family().startswith('x86') and get_option('sse41')
+   pre_args += '-DUSE_SSE41'
+   with_sse41 = true
+ 
+diff --git mesa-clean/meson.options mesa-workdir/meson.options
+index 220d46e..d98fa82 100644
+--- mesa-clean/meson.options
++++ mesa-workdir/meson.options
+@@ -635,6 +635,13 @@ option(
+   description : 'use msse2 flag for x86. Uses sse/sse2 instead of x87. Default: true',
+ )
+ 
++option(
++  'sse41',
++  type : 'boolean',
++  value : true,
++  description : 'use msse4.1 flag for x86. Uses sse4.1 instead of x87. Default: true',
++)
++
+ option(
+   'perfetto',
+   type : 'boolean',
 diff --git mesa-clean/src/util/detect_os.h mesa-workdir/src/util/detect_os.h
 index 7403724..16cce67 100644
 --- mesa-clean/src/util/detect_os.h
@@ -39,6 +66,19 @@ index b594a8f..303583c 100644
                    getpid());
           fd = mkstemps(log_file, 4);
           if (fd >= 0)
+diff --git mesa-clean/src/util/meson.build mesa-workdir/src/util/meson.build
+index 30cf227..bb73d43 100644
+--- mesa-clean/src/util/meson.build
++++ mesa-workdir/src/util/meson.build
+@@ -186,7 +186,7 @@ libmesa_util_links = []
+ 
+ if host_machine.cpu_family() == 'aarch64' and cc.get_id() != 'msvc'
+   files_mesa_util += files('cache_ops_aarch64.c')
+-elif host_machine.cpu_family() in ['x86', 'x86_64'] and cc.get_id() != 'msvc'
++elif host_machine.cpu_family() in ['x86', 'x86_64'] and cc.get_id() != 'msvc' and get_option('sse41')
+   libmesa_util_clflush = static_library(
+     'mesa_util_clflush',
+     ['cache_ops_x86.c'],
 diff --git mesa-clean/src/util/os_misc.c mesa-workdir/src/util/os_misc.c
 index ee2b790..9fbb5bd 100644
 --- mesa-clean/src/util/os_misc.c
@@ -52,6 +92,22 @@ index ee2b790..9fbb5bd 100644
  #  include <unistd.h>
  #elif DETECT_OS_OPENBSD || DETECT_OS_FREEBSD
  #  include <sys/resource.h>
+diff --git mesa-clean/src/util/u_cpu_detect.c mesa-workdir/src/util/u_cpu_detect.c
+index 451881d..0b48057 100644
+--- mesa-clean/src/util/u_cpu_detect.c
++++ mesa-workdir/src/util/u_cpu_detect.c
+@@ -688,6 +688,11 @@ void check_cpu_caps_override(void)
+ #endif
+ #endif /* DETECT_ARCH_X86 || DETECT_ARCH_X86_64 */
+ 
++#if DETECT_OS_SVR4
++   /* SSE support has not yet been added into the kernel by me, this avoids having to set the enviroment variable everywhere */
++   util_cpu_caps.has_sse = 0;
++#endif
++
+    if (override_cpu_caps != NULL) {
+ #if DETECT_ARCH_X86 || DETECT_ARCH_X86_64
+       if (!strcmp(override_cpu_caps, "nosse")) {
 diff --git mesa-clean/src/util/u_thread.c mesa-workdir/src/util/u_thread.c
 index 3a8785c..458ce32 100644
 --- mesa-clean/src/util/u_thread.c
