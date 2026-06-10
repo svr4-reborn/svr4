@@ -5,8 +5,8 @@ Keep the following in mind when debugging:
 - The preferred debugging method is to use GDB and QEMUs GDB stub.
 
 Keep the following in mind with the build system:
-- The legacy Makefiles serve only as reference to how the kernel and OS were compiled back in the day. They are not used anymore.
-- All build logic resides in the Python build tooling and the kernel build spec.
+- The legacy Makefiles that described how the kernel and OS were compiled back in the day have been removed; consult git history if you need them as reference. They were never used by the modern build.
+- All build logic resides in the Python build tooling (`uts/build.py` + `uts/tools/`) and the kernel build spec under `uts/build-specs/`.
 
 Keep the following in mind when testing in a VM:
 - Use the Jinx-backed make targets from the repository root. `make hdd` regenerates the hard-disk image at the build root, and `make qemu` boots it under QEMU *and* rebuilds the HDD image.
