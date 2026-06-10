@@ -41,10 +41,13 @@
 
 #define SVR4WS_WIDTH 800
 #define SVR4WS_HEIGHT 600
-#define SVR4WS_DEPTH 8
-#define SVR4WS_BPP 8
+#define SVR4WS_DEPTH 16
+#define SVR4WS_BPP 16
+#define SVR4WS_BYTES_PER_PIXEL (SVR4WS_BPP / 8)
+#define SVR4WS_FRAMEBUFFER_STRIDE (SVR4WS_WIDTH * SVR4WS_BYTES_PER_PIXEL)
+#define SVR4WS_FRAMEBUFFER_SIZE (SVR4WS_HEIGHT * SVR4WS_FRAMEBUFFER_STRIDE)
 #define SVR4WS_PLANES 4
-#define SVR4WS_HW_COLORS 256
+#define SVR4WS_HW_COLORS 0
 #define SVR4WS_COLORMAP_ENTRIES 256
 
 #define SYS_CLOCAL 127
@@ -74,6 +77,13 @@
 
 #define SVR4WS_BANK_APERTURE (64 * 1024)
 #define SVR4WS_BANK_GRANULARITY (16 * 1024)
+
+#define CIRRUS_SR07_BPP_SVGA 0x01
+#define CIRRUS_SR07_BPP_16 0x06
+#define CIRRUS_SR07_ISAADDR_A0000 0x80
+#define CIRRUS_SR0F_MEMSIZE_1M 0x10
+#define CIRRUS_SR0F_BANKSWITCH 0x80
+#define CIRRUS_HIDDEN_DAC_565 0x01
 
 #ifndef HW_SKIP_CONSOLE
 #define HW_SKIP_CONSOLE 4
@@ -136,6 +146,8 @@ struct kd_custom_mode {
     unsigned long  buf_size;
     unsigned long  map_size;
     unsigned short slbytes;
+    unsigned char  ramdac;
+    unsigned char  reserved;
     struct b_param regs;
 };
 
@@ -369,6 +381,15 @@ SVR4WSWritePort8(unsigned short port, unsigned char value)
     __asm__ __volatile__("outb %0, %w1" : : "a"(value), "Nd"(port) : "memory");
 }
 
+static inline unsigned char
+SVR4WSReadPort8(unsigned short port)
+{
+    unsigned char value;
+
+    __asm__ __volatile__("inb %w1, %0" : "=a"(value) : "Nd"(port) : "memory");
+    return value;
+}
+
 static void
 SVR4WSWriteVGARegister(unsigned short index_port, unsigned short data_port, unsigned char index, unsigned char value)
 {
@@ -386,6 +407,22 @@ static void
 SVR4WSSetVGAByteMask(unsigned char byte_mask)
 {
     SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x08, byte_mask);
+}
+
+static void
+SVR4WSSetCirrusBank(int bank)
+{
+    SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x09, (unsigned char)bank);
+}
+
+static void
+SVR4WSSetCirrusHiddenDAC(unsigned char value)
+{
+    (void)SVR4WSReadPort8(0x3c6);
+    (void)SVR4WSReadPort8(0x3c6);
+    (void)SVR4WSReadPort8(0x3c6);
+    (void)SVR4WSReadPort8(0x3c6);
+    SVR4WSWritePort8(0x3c6, value);
 }
 
 static Bool
@@ -597,22 +634,32 @@ SVR4WSRefreshArea(ScrnInfoPtr pScrn, int count, BoxPtr boxes)
 
         int y;
         for (y = y1; y < y2; ++y) {
-            int x;
-            const unsigned char *src = fPtr->shadow + ((size_t)y * (size_t)fPtr->shadow_stride);
-            size_t row_offset = (size_t)y * (size_t)fPtr->framebuffer_stride;
+            const unsigned char *src;
+            size_t offset;
+            size_t remaining;
 
-            for (x = x1; x < x2; ++x) {
-                size_t offset = row_offset + (size_t)x;
+            src = fPtr->shadow + ((size_t)y * (size_t)fPtr->shadow_stride)
+                + ((size_t)x1 * SVR4WS_BYTES_PER_PIXEL);
+            offset = ((size_t)y * (size_t)fPtr->framebuffer_stride)
+                + ((size_t)x1 * SVR4WS_BYTES_PER_PIXEL);
+            remaining = (size_t)(x2 - x1) * SVR4WS_BYTES_PER_PIXEL;
+
+            while (remaining) {
                 size_t bank_base = offset & ~((size_t)SVR4WS_BANK_APERTURE - 1U);
                 int bank = (int)(bank_base / SVR4WS_BANK_GRANULARITY);
                 size_t bank_offset = offset - bank_base;
+                size_t bank_remaining = (size_t)SVR4WS_BANK_APERTURE - bank_offset;
+                size_t chunk = remaining < bank_remaining ? remaining : bank_remaining;
 
                 if (bank != current_bank) {
-                    SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x09, (unsigned char)bank);
+                    SVR4WSSetCirrusBank(bank);
                     current_bank = bank;
                 }
 
-                fPtr->framebuffer[bank_offset] = src[x];
+                memcpy((void *)(fPtr->framebuffer + bank_offset), src, chunk);
+                src += chunk;
+                offset += chunk;
+                remaining -= chunk;
             }
         }
     }
@@ -679,6 +726,8 @@ SVR4WSPreInit(ScrnInfoPtr pScrn, int flags)
     SVR4WSPtr fPtr;
     EntityInfoPtr entity;
     Gamma zeros = { 0.0, 0.0, 0.0 };
+    rgb default_weight = { 5, 6, 5 };
+    rgb default_mask = { 0, 0, 0 };
 
     if (flags & PROBE_DETECT)
         return TRUE;
@@ -698,12 +747,14 @@ SVR4WSPreInit(ScrnInfoPtr pScrn, int flags)
     if (!xf86SetDepthBpp(pScrn, SVR4WS_DEPTH, SVR4WS_DEPTH, SVR4WS_BPP, 0))
         return FALSE;
     if (pScrn->depth != SVR4WS_DEPTH || pScrn->bitsPerPixel != SVR4WS_BPP) {
-        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "only depth 8 / bpp 8 is supported by this first driver\n");
+        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "only depth 16 / bpp 16 is supported\n");
         return FALSE;
     }
+    if (!xf86SetWeight(pScrn, default_weight, default_mask))
+        return FALSE;
 
     xf86PrintDepthBpp(pScrn);
-    if (!xf86SetDefaultVisual(pScrn, PseudoColor))
+    if (!xf86SetDefaultVisual(pScrn, TrueColor))
         return FALSE;
     if (!xf86SetGamma(pScrn, zeros))
         return FALSE;
@@ -718,12 +769,12 @@ SVR4WSPreInit(ScrnInfoPtr pScrn, int flags)
     fPtr->vt_path = xf86GetOptValString(fPtr->options, OPTION_VT);
     {
         const char *configured_mode = xf86GetOptValString(fPtr->options, OPTION_MODE);
-        if (configured_mode && strcmp(configured_mode, "vdc800x600e") != 0) {
-            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "configured mode '%s' is not supported; falling back to vdc800x600e\n", configured_mode);
+        if (configured_mode && strcmp(configured_mode, "cirrus800x600x16") != 0) {
+            xf86DrvMsg(pScrn->scrnIndex, X_WARNING, "configured mode '%s' is not supported; falling back to cirrus800x600x16\n", configured_mode);
         }
     }
 
-    pScrn->videoRam = 512;
+    pScrn->videoRam = 1024;
     pScrn->virtualX = SVR4WS_WIDTH;
     pScrn->virtualY = SVR4WS_HEIGHT;
     pScrn->displayWidth = SVR4WS_WIDTH;
@@ -783,7 +834,8 @@ SVR4WSEnterVT(VT_FUNC_ARGS_DECL)
     }
     {
         struct kd_custom_mode custom_mode = {
-            800, 600, 256, 800 * 600, SVR4WS_BANK_APERTURE, 800,
+            SVR4WS_WIDTH, SVR4WS_HEIGHT, 0, SVR4WS_FRAMEBUFFER_SIZE,
+            SVR4WS_BANK_APERTURE, SVR4WS_FRAMEBUFFER_STRIDE, 3, 0,
             {
                 {0x00, 0x00, 0x00, 0x00, 0x00},
                 {0x01, 0x0f, 0x00, 0x0e},
@@ -791,7 +843,7 @@ SVR4WSEnterVT(VT_FUNC_ARGS_DECL)
                 {
                     0x7b, 0x63, 0x64, 0x9e, 0x69, 0x92, 0x6f, 0xf0,
                     0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                    0x58, 0x8a, 0x57, 0x64, 0x40, 0x58, 0x6f, 0xa3, 0xff
+                    0x58, 0x8a, 0x57, 0xc8, 0x40, 0x58, 0x6f, 0xa3, 0xff
                 },
                 {
                     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
@@ -827,8 +879,12 @@ SVR4WSEnterVT(VT_FUNC_ARGS_DECL)
     }
     /* Unlock Cirrus Logic extensions */
     SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x06, 0x12);
-    /* Enable packed-pixel 256-color mode (SR07 = 0x81) */
-    SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x07, 0x81);
+    /* Enable 16-bpp packed-pixel SVGA mode at the A0000 aperture. */
+    SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x07,
+        CIRRUS_SR07_ISAADDR_A0000 | CIRRUS_SR07_BPP_SVGA | CIRRUS_SR07_BPP_16);
+    SVR4WSSetCirrusHiddenDAC(CIRRUS_HIDDEN_DAC_565);
+    SVR4WSWriteVGARegister(0x3c4, 0x3c5, 0x0f,
+        CIRRUS_SR0F_MEMSIZE_1M | CIRRUS_SR0F_BANKSWITCH);
     /* Configure single bank mode with 16KB granularity */
     SVR4WSWriteVGARegister(0x3ce, 0x3cf, 0x0b, 0x20);
 
@@ -865,8 +921,8 @@ SVR4WSScreenInit(SCREEN_INIT_ARGS_DECL)
     fPtr = SVR4WSPTR(pScrn);
     SVR4WSDebug("svr4ws: ScreenInit\n");
 
-    fPtr->shadow_stride = SVR4WS_WIDTH;
-    fPtr->framebuffer_stride = SVR4WS_WIDTH;
+    fPtr->shadow_stride = SVR4WS_FRAMEBUFFER_STRIDE;
+    fPtr->framebuffer_stride = SVR4WS_FRAMEBUFFER_STRIDE;
     fPtr->shadow_size = (size_t)SVR4WS_HEIGHT * (size_t)fPtr->shadow_stride;
     fPtr->shadow = calloc(1, fPtr->shadow_size);
     if (!fPtr->shadow)
@@ -905,9 +961,11 @@ SVR4WSScreenInit(SCREEN_INIT_ARGS_DECL)
 
     if (!miCreateDefColormap(pScreen))
         return FALSE;
-    SVR4WSDebug("svr4ws: HandleColormaps\n");
-    if (!xf86HandleColormaps(pScreen, SVR4WS_COLORMAP_ENTRIES, pScrn->rgbBits, SVR4WSLoadPalette, NULL, CMAP_PALETTED_TRUECOLOR))
-        return FALSE;
+    if (pScrn->depth <= 8) {
+        SVR4WSDebug("svr4ws: HandleColormaps\n");
+        if (!xf86HandleColormaps(pScreen, SVR4WS_COLORMAP_ENTRIES, pScrn->rgbBits, SVR4WSLoadPalette, NULL, CMAP_PALETTED_TRUECOLOR))
+            return FALSE;
+    }
     SVR4WSDebug("svr4ws: ShadowFBInit\n");
     if (!fPtr->ShadowFBInit(pScreen, SVR4WSRefreshArea))
         return FALSE;
