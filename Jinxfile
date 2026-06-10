@@ -27,6 +27,9 @@ case "${JINX_ARCH}" in
         TARGET_CFLAGS="${TARGET_CFLAGS} -m32 -mno-mmx -mno-sse -mno-sse2"
         TARGET_CXXFLAGS="${TARGET_CXXFLAGS} -m32 -mno-mmx -mno-sse -mno-sse2"
         TARGET_LDFLAGS="${TARGET_LDFLAGS} -m32"
+        # Meson's canonical cpu_family for 32-bit x86 is 'x86', not 'i386'/'i686'.
+        # Projects (e.g. mesa's blake3) key SIMD decisions off this exact string.
+        JINX_MESON_CPU_FAMILY="x86"
         ;;
     *)
         echo "Unsupported architecture: ${JINX_ARCH}"
@@ -168,6 +171,7 @@ meson_configure_noflags() {
     fi
 
         JINX_ARCH=${JINX_ARCH} \
+        JINX_MESON_CPU_FAMILY=${JINX_MESON_CPU_FAMILY} \
         OS_TRIPLET=${OS_TRIPLET} \
         sysroot_dir=${sysroot_dir} \
     envsubst < "${base_dir}/support/meson.cross-file" > ./cross-file.txt
